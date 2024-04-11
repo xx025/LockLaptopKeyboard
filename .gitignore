@@ -1,0 +1,7 @@
+/.venv/
+/main.spec
+/ui.html
+/build/
+*.exe
+*.iml
+*.xml

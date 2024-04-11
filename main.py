@@ -20,6 +20,7 @@ def get_start_type(service_name):
     types = dict(
         auto="AUTO_START",
         disabled="DISABLED",
+        demand="DEMAND_START"
     )
 
     typeB = dict(
