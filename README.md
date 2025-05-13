@@ -8,6 +8,9 @@
 
 ### 适用性
 
+
+>Linux用户可以查看和使用 [toggle_keyboard.sh](toggle_keyboard.sh)
+
 你可以手动以管理员身份运行下面的cmd命令，检查是否适用于你的机器
 
 **禁用**
@@ -30,6 +33,10 @@ sc config i8042prt start= auto
 
 
 <img src="img/img.png" style="height:300px;width:auto" alt="1"/>
+
+
+
+
 
 ### 支持作者
 
