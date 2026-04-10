@@ -1,7 +1,10 @@
 /.venv/
-/main.spec
+/*.spec
 /ui.html
 /build/
+/dist/
+__pycache__/
+*.pyc
 *.exe
 *.iml
 *.xml
