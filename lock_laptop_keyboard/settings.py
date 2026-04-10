@@ -14,12 +14,50 @@ from .constants import (
     RUN_KEY_PATH,
     RUN_VALUE_NAME,
     SETTINGS_FILE_NAME,
+    THEME_DARK,
+    THEME_LIGHT,
+    THEME_SYSTEM,
 )
 from .resources import app_data_dir, entry_script_path, launcher_executable
 
 
+THEME_REGISTRY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+THEME_REGISTRY_VALUE = "AppsUseLightTheme"
+VALID_THEME_MODES = {THEME_SYSTEM, THEME_LIGHT, THEME_DARK}
+
+
 def settings_file_path():
     return app_data_dir().joinpath(SETTINGS_FILE_NAME)
+
+
+def normalize_theme_mode(theme_mode):
+    normalized = str(theme_mode or "").strip().lower()
+    if normalized in VALID_THEME_MODES:
+        return normalized
+    return THEME_SYSTEM
+
+
+def detect_system_theme_mode():
+    if sys.platform == "win32" and winreg is not None:
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                THEME_REGISTRY_PATH,
+                0,
+                winreg.KEY_READ,
+            ) as key:
+                value, _ = winreg.QueryValueEx(key, THEME_REGISTRY_VALUE)
+                return THEME_LIGHT if int(value) else THEME_DARK
+        except (FileNotFoundError, OSError, ValueError, TypeError):
+            pass
+    return THEME_LIGHT
+
+
+def resolve_theme_mode(theme_mode):
+    normalized = normalize_theme_mode(theme_mode)
+    if normalized == THEME_SYSTEM:
+        return detect_system_theme_mode()
+    return normalized
 
 
 def load_settings():
@@ -46,6 +84,7 @@ def load_settings():
                 loaded.get("preferred_control_mode", settings["preferred_control_mode"])
             )
             or CONTROL_MODE_INSTANT,
+            "theme_mode": normalize_theme_mode(loaded.get("theme_mode", settings["theme_mode"])),
             "instant_target_ids": [
                 str(item)
                 for item in loaded.get("instant_target_ids", settings["instant_target_ids"])
@@ -68,6 +107,7 @@ def save_settings(settings):
                     settings.get("preferred_control_mode", CONTROL_MODE_INSTANT)
                 )
                 or CONTROL_MODE_INSTANT,
+                "theme_mode": normalize_theme_mode(settings.get("theme_mode", THEME_SYSTEM)),
                 "instant_target_ids": [
                     str(item)
                     for item in settings.get("instant_target_ids", [])

@@ -12,6 +12,7 @@ MESSAGES = {
         "control.title": "⌨ 键盘控制",
         "control.subtitle": "当前为驱动模式，修改后需要重启电脑生效。",
         "control.subtitle.instant": "当前为即时设备模式，成功时通常无需重启即可生效。",
+        "control.subtitle.instant_limited": "当前为即时设备模式，但这台机器上检测到的键盘大多仍需要重启后才能真正生效。",
         "control.subtitle.driver": "当前为驱动模式，修改后需要重启电脑生效。",
         "control.action_group": "⚡ 快捷操作",
         "control.mode_group": "🧭 控制模式",
@@ -19,6 +20,7 @@ MESSAGES = {
         "control.mode.driver": "🧱 驱动兼容模式",
         "control.device_group": "🗂 设备选择",
         "control.device.caption.instant": "勾选即时模式要操作的键盘项。一个物理键盘可能会合并多个底层子设备，默认只预选更像内置键盘的目标。",
+        "control.device.caption.instant_limited": "这台机器上的键盘在即时模式下大多仍会要求重启。列表已按内置、外置和其它输入分组，先勾选目标，再决定是否继续操作。",
         "control.device.caption.driver": "当前是驱动模式，设备勾选暂不会生效；切回即时模式时会使用这里的选择。",
         "control.device.caption.empty": "当前没有可选的键盘设备。可以点击“刷新设备”，或切换到驱动模式。",
         "control.device.summary": "已选 {selected} / {total} 个键盘项，已忽略 {ignored} 个虚拟或不支持的目标。",
@@ -26,6 +28,14 @@ MESSAGES = {
         "control.device.instance": "ID: {instance_id}",
         "control.device.instance_group": "包含 {count} 个子设备，例如：{instance_id}",
         "control.device.members": "{count} 个子设备",
+        "control.device.selection.recommended": "默认推荐",
+        "control.device.state.enabled": "当前启用",
+        "control.device.state.disabled": "当前禁用",
+        "control.device.state.unknown": "状态待确认",
+        "control.device.section.builtin": "推荐的内置目标",
+        "control.device.section.external": "外置键盘",
+        "control.device.section.virtual": "虚拟 / 远程输入",
+        "control.device.section.other": "其它输入目标",
         "control.device.kind.acpi_ps2": "内置 PS/2 / ACPI",
         "control.device.kind.keyboard_controller": "内置控制器",
         "control.device.kind.converted_device": "系统转换设备",
@@ -48,6 +58,10 @@ MESSAGES = {
         "control.visual_body.instant": (
             "即时模式会定位当前可控的键盘设备，"
             "并按下方勾选目标直接禁用或启用。是否需要重启请以设备列表中的提示为准。"
+        ),
+        "control.visual_body.instant_limited": (
+            "这台机器上检测到的键盘在即时模式下大多仍会返回“需要重启”。"
+            "即时模式更适合用来精确选择设备目标，而不是保证立刻切换。"
         ),
         "control.visual_body.driver": (
             "驱动模式会修改 i8042prt 启动类型，兼容旧机器或无法识别设备级目标的情况，"
@@ -73,6 +87,10 @@ MESSAGES = {
             "即时模式会展示内置与外置键盘，并继续忽略明显的虚拟输入设备。\n"
             "默认只会预选更像内置键盘的目标；如果你也想控制外置键盘，可以手动勾选。"
         ),
+        "hint.body.instant_limited": (
+            "从当前机器的返回结果看，内置和外置键盘大多都仍需要重启后才会真正切换。\n"
+            "列表已经按内置、外置和虚拟输入分组，并补充了当前状态、重启提示和子设备数量，方便你更准确地选择目标。"
+        ),
         "hint.body.driver": (
             "驱动模式适合作为兼容兜底方案。\n"
             "它通过修改 i8042prt 服务启动类型控制笔记本内置键盘，"
@@ -96,6 +114,12 @@ MESSAGES = {
             "开机自启写入当前用户的 Windows 启动项。\n"
             "如果勾选“最小化到托盘”，系统启动后程序不会自动弹出主窗口。"
         ),
+        "settings.appearance_group": "🎨 外观",
+        "settings.theme": "主题",
+        "settings.theme.system": "跟随系统",
+        "settings.theme.light": "浅色",
+        "settings.theme.dark": "深色",
+        "settings.appearance_hint": "切换主题会立即预览，保存设置后下次启动继续使用。",
         "settings.current_group": "🧭 当前设置",
         "settings.status.unsupported": "当前平台不支持开机自启设置。",
         "settings.status.disabled": "当前未开启开机自启。",
@@ -104,6 +128,8 @@ MESSAGES = {
         "settings.save": "💾 保存设置",
         "settings.saved": "设置已保存。",
         "settings.targets.current": "当前已选择 {count} 个即时模式键盘项。",
+        "settings.theme.current": "当前主题：{theme}",
+        "settings.theme.current_system": "当前主题：{theme}（正在使用{effective}）",
         "tray.show": "🪟 显示窗口",
         "tray.disable": "🚫 禁用键盘",
         "tray.enable": "✅ 启用键盘",
@@ -133,6 +159,7 @@ MESSAGES = {
         "control.title": "⌨ Keyboard Control",
         "control.subtitle": "Driver mode is active. Changes take effect after a reboot.",
         "control.subtitle.instant": "Instant device mode is active. Successful changes usually apply without a reboot.",
+        "control.subtitle.instant_limited": "Instant device mode is active, but most detected keyboards on this machine still seem to require a reboot before the change really applies.",
         "control.subtitle.driver": "Driver mode is active. Changes take effect after a reboot.",
         "control.action_group": "⚡ Quick Actions",
         "control.mode_group": "🧭 Control Mode",
@@ -140,6 +167,7 @@ MESSAGES = {
         "control.mode.driver": "🧱 Driver compatibility mode",
         "control.device_group": "🗂 Device Selection",
         "control.device.caption.instant": "Select which keyboard entries instant mode should control. One physical keyboard may combine multiple low-level child devices, and only built-in-looking targets are preselected by default.",
+        "control.device.caption.instant_limited": "Most keyboards on this machine still appear to require a reboot even in instant mode. The list is grouped into built-in, external, and other input targets so it is easier to pick the right device first.",
         "control.device.caption.driver": "Driver mode ignores device selection for now. These selections will be used again when you switch back to instant mode.",
         "control.device.caption.empty": "No selectable keyboard device is available right now. Try Refresh devices or switch to driver mode.",
         "control.device.summary": "{selected} of {total} keyboard entries selected. {ignored} virtual or unsupported targets are ignored.",
@@ -147,6 +175,14 @@ MESSAGES = {
         "control.device.instance": "ID: {instance_id}",
         "control.device.instance_group": "Contains {count} child devices, for example: {instance_id}",
         "control.device.members": "{count} child devices",
+        "control.device.selection.recommended": "Recommended by default",
+        "control.device.state.enabled": "Currently enabled",
+        "control.device.state.disabled": "Currently disabled",
+        "control.device.state.unknown": "State needs verification",
+        "control.device.section.builtin": "Recommended built-in targets",
+        "control.device.section.external": "External keyboards",
+        "control.device.section.virtual": "Virtual / remote input",
+        "control.device.section.other": "Other input targets",
         "control.device.kind.acpi_ps2": "Built-in PS/2 / ACPI",
         "control.device.kind.keyboard_controller": "Built-in controller",
         "control.device.kind.converted_device": "Converted system device",
@@ -173,6 +209,10 @@ MESSAGES = {
             "Instant mode tries to locate controllable keyboard devices "
             "and apply changes to the selected targets directly. Check the device list for the reboot expectation of each target."
         ),
+        "control.visual_body.instant_limited": (
+            "On this machine, most detected keyboards still report that a reboot is required even in instant mode. "
+            "Instant mode is therefore more useful for precise target selection than for guaranteeing an immediate switch."
+        ),
         "control.visual_body.driver": (
             "Driver mode changes the i8042prt start type. It is a wider compatibility fallback, "
             "but the change only applies after the next reboot."
@@ -197,6 +237,10 @@ MESSAGES = {
             "Instant mode lists both built-in and external keyboards while still excluding obvious virtual input devices.\n"
             "Only built-in-looking targets are preselected by default. Select external keyboards manually if you also want to control them."
         ),
+        "hint.body.instant_limited": (
+            "Based on the responses from this machine, both built-in and external keyboards usually still need a reboot before the change really applies.\n"
+            "The list is now grouped by built-in, external, and virtual input, and each entry shows the current state, reboot expectation, and child-device count."
+        ),
         "hint.body.driver": (
             "Driver mode is kept as the compatibility fallback.\n"
             "It changes the i8042prt start type, which may affect some PS/2 devices and requires a reboot."
@@ -219,6 +263,12 @@ MESSAGES = {
             "Autostart uses the current user's Windows Run entry.\n"
             "If 'Start minimized to tray' is enabled, the main window stays hidden on startup."
         ),
+        "settings.appearance_group": "🎨 Appearance",
+        "settings.theme": "Theme",
+        "settings.theme.system": "Follow system",
+        "settings.theme.light": "Light",
+        "settings.theme.dark": "Dark",
+        "settings.appearance_hint": "Theme changes preview immediately and will be kept after you save settings.",
         "settings.current_group": "🧭 Current Settings",
         "settings.status.unsupported": "Autostart settings are not supported on this platform.",
         "settings.status.disabled": "Autostart is currently disabled.",
@@ -227,6 +277,8 @@ MESSAGES = {
         "settings.save": "💾 Save settings",
         "settings.saved": "Settings saved.",
         "settings.targets.current": "{count} instant-mode keyboard entries are currently selected.",
+        "settings.theme.current": "Current theme: {theme}",
+        "settings.theme.current_system": "Current theme: {theme} (using {effective})",
         "tray.show": "🪟 Show window",
         "tray.disable": "🚫 Disable keyboard",
         "tray.enable": "✅ Enable keyboard",

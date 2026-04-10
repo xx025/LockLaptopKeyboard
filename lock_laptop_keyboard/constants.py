@@ -15,6 +15,10 @@ RUN_VALUE_NAME = "LockLaptopKeyboard"
 CONTROL_MODE_INSTANT = "instant"
 CONTROL_MODE_DRIVER = "driver"
 
+THEME_SYSTEM = "system"
+THEME_LIGHT = "light"
+THEME_DARK = "dark"
+
 WORK_COMMANDS = {
     "enable": "sc config i8042prt start= demand",
     "stop": "sc config i8042prt start= disabled",
@@ -25,6 +29,7 @@ DEFAULT_SETTINGS = {
     "autostart_enabled": False,
     "start_minimized_to_tray": True,
     "preferred_control_mode": CONTROL_MODE_INSTANT,
+    "theme_mode": THEME_SYSTEM,
     "instant_target_ids": [],
 }
 

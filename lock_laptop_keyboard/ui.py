@@ -1,11 +1,15 @@
 import queue
+import re
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import font as tkfont, messagebox, ttk
 
 from .constants import (
     CONTROL_MODE_DRIVER,
     CONTROL_MODE_INSTANT,
     DEFAULT_SETTINGS,
+    THEME_DARK,
+    THEME_LIGHT,
+    THEME_SYSTEM,
     TRAY_COMMAND_DISABLE,
     TRAY_COMMAND_ENABLE,
     TRAY_COMMAND_EXIT,
@@ -15,6 +19,8 @@ from .constants import (
 from .resources import resource_path
 from .settings import (
     autostart_supported,
+    normalize_theme_mode,
+    resolve_theme_mode,
     save_settings,
     set_autostart_enabled,
     sync_settings_with_system,
@@ -30,6 +36,60 @@ from .system_control import (
     set_keyboard_enabled_via_uac,
 )
 from .tray import TrayIcon
+
+
+THEME_PALETTES = {
+    THEME_LIGHT: {
+        "page_bg": "#f3f3f3",
+        "surface_bg": "#ffffff",
+        "surface_alt_bg": "#f6f6f6",
+        "card_bg": "#ffffff",
+        "border": "#e5e5e5",
+        "text_primary": "#1c1c1c",
+        "text_secondary": "#5f5f5f",
+        "text_muted": "#8b8b8b",
+        "accent": "#005fb8",
+        "accent_active": "#004e98",
+        "accent_text": "#ffffff",
+        "focus": "#99c5ff",
+        "button_secondary_bg": "#f5f5f5",
+        "button_secondary_active": "#ececec",
+        "button_secondary_border": "#d9d9d9",
+        "tab_bg": "#ebebeb",
+        "tab_active_bg": "#f5f5f5",
+        "tab_selected_bg": "#ffffff",
+        "scrollbar_bg": "#d4d4d4",
+        "scrollbar_active_bg": "#bdbdbd",
+        "status_enabled": "#107c10",
+        "status_disabled": "#d13438",
+        "status_unknown": "#a15c00",
+    },
+    THEME_DARK: {
+        "page_bg": "#202020",
+        "surface_bg": "#2b2b2b",
+        "surface_alt_bg": "#323232",
+        "card_bg": "#2b2b2b",
+        "border": "#3d3d3d",
+        "text_primary": "#f5f5f5",
+        "text_secondary": "#d0d0d0",
+        "text_muted": "#a0a0a0",
+        "accent": "#60cdff",
+        "accent_active": "#7ad8ff",
+        "accent_text": "#082038",
+        "focus": "#88d9ff",
+        "button_secondary_bg": "#323232",
+        "button_secondary_active": "#3a3a3a",
+        "button_secondary_border": "#474747",
+        "tab_bg": "#2a2a2a",
+        "tab_active_bg": "#323232",
+        "tab_selected_bg": "#383838",
+        "scrollbar_bg": "#4b4b4b",
+        "scrollbar_active_bg": "#5c5c5c",
+        "status_enabled": "#6ccb5f",
+        "status_disabled": "#ff99a4",
+        "status_unknown": "#f0bf65",
+    },
+}
 
 
 class KeyboardControlApp(tk.Tk):
@@ -48,6 +108,9 @@ class KeyboardControlApp(tk.Tk):
         self._device_vars = {}
         self._device_checkbuttons = []
         self._device_canvas_window = None
+        self.style = None
+        self._theme_colors = THEME_PALETTES[THEME_LIGHT]
+        self._applied_theme_mode = None
 
         self.status_var = tk.StringVar()
         self.subtitle_var = tk.StringVar()
@@ -63,10 +126,12 @@ class KeyboardControlApp(tk.Tk):
         self.minimize_to_tray_var = tk.BooleanVar(
             value=bool(self.settings.get("start_minimized_to_tray"))
         )
+        self.theme_mode_var = tk.StringVar(value=self._resolve_initial_theme_mode())
         self.control_mode_var = tk.StringVar(value=self._resolve_initial_control_mode())
 
         self._configure_window()
         self._build_ui()
+        self._apply_theme()
         self._rebuild_device_list()
         self._start_tray()
         self._update_control_state()
@@ -75,6 +140,7 @@ class KeyboardControlApp(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
         self.after(150, self._poll_tray_commands)
         self.after(300, self._refresh_control_context)
+        self.after(1200, self._poll_theme_changes)
 
         if self._active_state() is None and not self._should_start_hidden():
             self.after(250, self._show_unknown_state_warning)
@@ -82,36 +148,338 @@ class KeyboardControlApp(tk.Tk):
         if self._should_start_hidden() and self._tray_icon is not None:
             self.after(200, self.hide_to_tray)
 
+    def _resolve_initial_theme_mode(self):
+        return normalize_theme_mode(self.settings.get("theme_mode"))
+
+    def _effective_theme_mode(self):
+        return resolve_theme_mode(self.theme_mode_var.get())
+
+    def _current_theme_label(self):
+        selected_theme = normalize_theme_mode(self.theme_mode_var.get())
+        selected_label = self.t(f"settings.theme.{selected_theme}")
+        if selected_theme == THEME_SYSTEM:
+            effective_label = self.t(f"settings.theme.{self._effective_theme_mode()}")
+            return self.t(
+                "settings.theme.current_system",
+                theme=selected_label,
+                effective=effective_label,
+            )
+        return self.t("settings.theme.current", theme=selected_label)
+
+    def _pick_font_family(self, available_fonts, *candidates):
+        for candidate in candidates:
+            if candidate in available_fonts:
+                return candidate
+        return "TkDefaultFont"
+
+    def _apply_theme(self):
+        effective_theme = self._effective_theme_mode()
+        self._theme_colors = dict(THEME_PALETTES[effective_theme])
+        self._applied_theme_mode = effective_theme
+        colors = self._theme_colors
+
+        if self.style is None:
+            self.style = ttk.Style(self)
+
+        available_themes = self.style.theme_names()
+        if "clam" in available_themes:
+            self.style.theme_use("clam")
+        elif "alt" in available_themes:
+            self.style.theme_use("alt")
+
+        available_fonts = set(tkfont.families())
+        if self.i18n.language.startswith("zh"):
+            body_font = self._pick_font_family(
+                available_fonts,
+                "Microsoft YaHei UI",
+                "Segoe UI",
+                "TkDefaultFont",
+            )
+            title_font = self._pick_font_family(
+                available_fonts,
+                "Microsoft YaHei UI",
+                "Segoe UI Semibold",
+                body_font,
+            )
+        else:
+            body_font = self._pick_font_family(
+                available_fonts,
+                "Segoe UI Variable Text",
+                "Segoe UI",
+                "TkDefaultFont",
+            )
+            title_font = self._pick_font_family(
+                available_fonts,
+                "Segoe UI Variable Display",
+                "Segoe UI Semibold",
+                body_font,
+            )
+
+        self.configure(bg=colors["page_bg"])
+
+        self.style.configure(
+            ".",
+            background=colors["card_bg"],
+            foreground=colors["text_primary"],
+            font=(body_font, 10),
+        )
+        self.style.map(".", foreground=[("disabled", colors["text_muted"])])
+
+        self.style.configure("TFrame", background=colors["card_bg"])
+        self.style.configure("Page.TFrame", background=colors["page_bg"], padding=16)
+        self.style.configure(
+            "Card.TFrame",
+            background=colors["card_bg"],
+            padding=18,
+            borderwidth=1,
+            bordercolor=colors["border"],
+            lightcolor=colors["border"],
+            darkcolor=colors["border"],
+            relief="solid",
+        )
+
+        self.style.configure("TLabel", background=colors["card_bg"], foreground=colors["text_primary"])
+        self.style.configure(
+            "Title.TLabel",
+            background=colors["card_bg"],
+            foreground=colors["text_primary"],
+            font=(title_font, 18, "bold"),
+        )
+        self.style.configure(
+            "Subtitle.TLabel",
+            background=colors["card_bg"],
+            foreground=colors["text_secondary"],
+            font=(body_font, 10),
+        )
+        self.style.configure(
+            "SectionTitle.TLabel",
+            background=colors["card_bg"],
+            foreground=colors["text_primary"],
+            font=(body_font, 10, "bold"),
+        )
+        self.style.configure(
+            "Body.TLabel",
+            background=colors["card_bg"],
+            foreground=colors["text_primary"],
+            font=(body_font, 10),
+        )
+        self.style.configure(
+            "Hint.TLabel",
+            background=colors["card_bg"],
+            foreground=colors["text_secondary"],
+            font=(body_font, 9),
+        )
+        self.style.configure(
+            "StatusValue.TLabel",
+            background=colors["card_bg"],
+            foreground=colors["text_primary"],
+            font=(title_font, 16, "bold"),
+        )
+        self.style.configure(
+            "DeviceSection.TLabel",
+            background=colors["card_bg"],
+            foreground=colors["accent"],
+            font=(body_font, 10, "bold"),
+        )
+        self.style.configure(
+            "DeviceMeta.TLabel",
+            background=colors["card_bg"],
+            foreground=colors["text_secondary"],
+            font=(body_font, 9),
+        )
+        self.style.configure(
+            "DeviceId.TLabel",
+            background=colors["card_bg"],
+            foreground=colors["text_muted"],
+            font=(body_font, 9),
+        )
+        self.style.configure(
+            "DeviceStateEnabled.TLabel",
+            background=colors["card_bg"],
+            foreground=colors["status_enabled"],
+            font=(body_font, 9, "bold"),
+        )
+        self.style.configure(
+            "DeviceStateDisabled.TLabel",
+            background=colors["card_bg"],
+            foreground=colors["status_disabled"],
+            font=(body_font, 9, "bold"),
+        )
+        self.style.configure(
+            "DeviceStateUnknown.TLabel",
+            background=colors["card_bg"],
+            foreground=colors["status_unknown"],
+            font=(body_font, 9, "bold"),
+        )
+
+        self.style.configure(
+            "TLabelframe",
+            background=colors["card_bg"],
+            bordercolor=colors["border"],
+            lightcolor=colors["border"],
+            darkcolor=colors["border"],
+            relief="solid",
+            borderwidth=1,
+        )
+        self.style.configure(
+            "TLabelframe.Label",
+            background=colors["card_bg"],
+            foreground=colors["text_primary"],
+            font=(body_font, 10, "bold"),
+        )
+
+        self.style.configure(
+            "TButton",
+            background=colors["button_secondary_bg"],
+            foreground=colors["text_primary"],
+            bordercolor=colors["button_secondary_border"],
+            lightcolor=colors["button_secondary_border"],
+            darkcolor=colors["button_secondary_border"],
+            focusthickness=1,
+            relief="solid",
+            padding=(14, 10),
+            font=(body_font, 10),
+        )
+        self.style.map(
+            "TButton",
+            background=[
+                ("disabled", colors["surface_alt_bg"]),
+                ("pressed", colors["button_secondary_active"]),
+                ("active", colors["button_secondary_active"]),
+            ],
+            foreground=[
+                ("disabled", colors["text_muted"]),
+                ("pressed", colors["text_primary"]),
+                ("active", colors["text_primary"]),
+            ],
+        )
+        self.style.configure("Secondary.TButton", padding=(14, 10))
+        self.style.configure(
+            "Primary.TButton",
+            background=colors["accent"],
+            foreground=colors["accent_text"],
+            bordercolor=colors["accent"],
+            lightcolor=colors["accent"],
+            darkcolor=colors["accent"],
+            padding=(14, 10),
+        )
+        self.style.map(
+            "Primary.TButton",
+            background=[
+                ("disabled", colors["surface_alt_bg"]),
+                ("pressed", colors["accent_active"]),
+                ("active", colors["accent_active"]),
+            ],
+            foreground=[
+                ("disabled", colors["text_muted"]),
+                ("pressed", colors["accent_text"]),
+                ("active", colors["accent_text"]),
+            ],
+        )
+
+        self.style.configure(
+            "TRadiobutton",
+            background=colors["card_bg"],
+            foreground=colors["text_primary"],
+            font=(body_font, 10),
+            padding=(0, 2),
+        )
+        self.style.map(
+            "TRadiobutton",
+            background=[("active", colors["card_bg"])],
+            foreground=[("disabled", colors["text_muted"])],
+        )
+
+        self.style.configure(
+            "TCheckbutton",
+            background=colors["card_bg"],
+            foreground=colors["text_primary"],
+            font=(body_font, 10),
+            padding=(0, 2),
+        )
+        self.style.map(
+            "TCheckbutton",
+            background=[("active", colors["card_bg"])],
+            foreground=[("disabled", colors["text_muted"])],
+        )
+        self.style.configure(
+            "Device.TCheckbutton",
+            background=colors["card_bg"],
+            foreground=colors["text_primary"],
+            font=(body_font, 10, "bold"),
+        )
+
+        self.style.configure(
+            "TNotebook",
+            background=colors["page_bg"],
+            borderwidth=0,
+            tabmargins=(0, 0, 0, 10),
+        )
+        self.style.configure(
+            "TNotebook.Tab",
+            background=colors["tab_bg"],
+            foreground=colors["text_secondary"],
+            bordercolor=colors["border"],
+            padding=(16, 9),
+            font=(body_font, 10),
+        )
+        self.style.map(
+            "TNotebook.Tab",
+            background=[
+                ("selected", colors["tab_selected_bg"]),
+                ("active", colors["tab_active_bg"]),
+            ],
+            foreground=[
+                ("selected", colors["text_primary"]),
+                ("active", colors["text_primary"]),
+            ],
+        )
+
+        self.style.configure(
+            "TScrollbar",
+            background=colors["scrollbar_bg"],
+            troughcolor=colors["page_bg"],
+            bordercolor=colors["page_bg"],
+            arrowcolor=colors["text_primary"],
+        )
+        self.style.map(
+            "TScrollbar",
+            background=[("active", colors["scrollbar_active_bg"])],
+        )
+        self.style.configure("DeviceList.Vertical.TScrollbar", arrowsize=12)
+        self.style.configure("TSeparator", background=colors["border"])
+
+        if hasattr(self, "device_canvas"):
+            self.device_canvas.configure(background=colors["card_bg"])
+
+    def _on_theme_mode_changed(self):
+        self._apply_theme()
+        self._update_control_state()
+        self._update_settings_summary()
+
+    def _poll_theme_changes(self):
+        if self._closing:
+            return
+
+        if normalize_theme_mode(self.theme_mode_var.get()) == THEME_SYSTEM:
+            effective_theme = self._effective_theme_mode()
+            if effective_theme != self._applied_theme_mode:
+                self._apply_theme()
+                self._update_control_state()
+                self._update_settings_summary()
+
+        self.after(1200, self._poll_theme_changes)
+
     def _configure_window(self):
         self.title(self.t("app.title"))
-        self.geometry("900x560")
-        self.minsize(820, 520)
-        self.configure(bg="#eff3f8")
+        self.geometry("900x640")
+        self.minsize(820, 580)
+        self.style = ttk.Style(self)
 
         try:
             self.iconbitmap(resource_path("img", "icon.ico"))
         except tk.TclError:
             pass
-
-        style = ttk.Style(self)
-        if "vista" in style.theme_names():
-            style.theme_use("vista")
-        elif "xpnative" in style.theme_names():
-            style.theme_use("xpnative")
-
-        style.configure("Page.TFrame", padding=16)
-        style.configure("Card.TFrame", padding=14)
-        style.configure("Title.TLabel", font=("Microsoft YaHei UI", 17, "bold"))
-        style.configure("Subtitle.TLabel", foreground="#526070")
-        style.configure("SectionTitle.TLabel", font=("Microsoft YaHei UI", 10, "bold"))
-        style.configure("Body.TLabel", foreground="#223042")
-        style.configure("Hint.TLabel", foreground="#5b6978")
-        style.configure("StatusValue.TLabel", font=("Microsoft YaHei UI", 15, "bold"))
-        style.configure("Primary.TButton", padding=(14, 9))
-        style.configure("Device.TCheckbutton", font=("Microsoft YaHei UI", 10, "bold"))
-        style.configure("DeviceMeta.TLabel", foreground="#506071")
-        style.configure("DeviceId.TLabel", foreground="#6b7683")
-        style.configure("DeviceList.Vertical.TScrollbar", arrowsize=12)
 
     def _build_ui(self):
         container = ttk.Frame(self, style="Page.TFrame")
@@ -122,8 +490,8 @@ class KeyboardControlApp(tk.Tk):
         notebook = ttk.Notebook(container)
         notebook.grid(row=0, column=0, sticky="nsew")
 
-        self.control_tab = ttk.Frame(notebook, padding=16)
-        self.settings_tab = ttk.Frame(notebook, padding=16)
+        self.control_tab = ttk.Frame(notebook, padding=16, style="Page.TFrame")
+        self.settings_tab = ttk.Frame(notebook, padding=16, style="Page.TFrame")
         notebook.add(self.control_tab, text=self.t("tab.control"))
         notebook.add(self.settings_tab, text=self.t("tab.settings"))
 
@@ -213,7 +581,7 @@ class KeyboardControlApp(tk.Tk):
             device_list_shell,
             highlightthickness=0,
             borderwidth=0,
-            background=self.cget("bg"),
+            background=self._theme_colors["card_bg"],
         )
         self.device_canvas.grid(row=0, column=0, sticky="nsew")
 
@@ -238,16 +606,20 @@ class KeyboardControlApp(tk.Tk):
         self.device_canvas.bind("<Enter>", self._bind_device_mousewheel)
         self.device_canvas.bind("<Leave>", self._unbind_device_mousewheel)
 
+        side_panel = ttk.Frame(self.control_tab, style="Page.TFrame")
+        side_panel.grid(row=2, column=1, sticky="nsew")
+        side_panel.columnconfigure(0, weight=1)
+
         action_frame = ttk.LabelFrame(
-            self.control_tab, text=self.t("control.action_group"), padding=14
+            side_panel, text=self.t("control.action_group"), padding=14
         )
-        action_frame.grid(row=2, column=1, sticky="nsew")
+        action_frame.grid(row=0, column=0, sticky="ew")
         action_frame.columnconfigure(0, weight=1)
         action_frame.columnconfigure(1, weight=1)
         self.disable_button = ttk.Button(
             action_frame,
             text=self.t("button.disable"),
-            style="Primary.TButton",
+            style="Secondary.TButton",
             command=lambda: self._apply_keyboard_state(False),
         )
         self.disable_button.grid(row=0, column=0, sticky="ew", padx=(0, 6), pady=(0, 10))
@@ -261,32 +633,32 @@ class KeyboardControlApp(tk.Tk):
         self.refresh_button = ttk.Button(
             action_frame,
             text=self.t("button.refresh"),
-            style="Primary.TButton",
+            style="Secondary.TButton",
             command=self._refresh_state_from_system,
         )
         self.refresh_button.grid(row=1, column=0, sticky="ew", padx=(0, 6))
         self.reboot_button = ttk.Button(
             action_frame,
             text=self.t("button.reboot"),
-            style="Primary.TButton",
+            style="Secondary.TButton",
             command=self._request_reboot,
         )
         self.reboot_button.grid(row=1, column=1, sticky="ew")
 
-        hint_frame = ttk.LabelFrame(self.control_tab, text=self.t("hint.group"), padding=14)
-        hint_frame.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        hint_frame = ttk.LabelFrame(side_panel, text=self.t("hint.group"), padding=14)
+        hint_frame.grid(row=1, column=0, sticky="ew", pady=(12, 0))
         hint_frame.columnconfigure(0, weight=1)
         ttk.Label(
             hint_frame,
             textvariable=self.hint_var,
             style="Body.TLabel",
-            wraplength=760,
+            wraplength=280,
             justify=tk.LEFT,
         ).grid(row=0, column=0, sticky="nw")
 
     def _build_settings_tab(self):
         self.settings_tab.columnconfigure(0, weight=1)
-        self.settings_tab.rowconfigure(2, weight=1)
+        self.settings_tab.rowconfigure(3, weight=1)
 
         header = ttk.Frame(self.settings_tab, style="Card.TFrame")
         header.grid(row=0, column=0, sticky="ew", pady=(0, 14))
@@ -328,10 +700,56 @@ class KeyboardControlApp(tk.Tk):
             style="Hint.TLabel",
         ).grid(row=3, column=0, sticky="w", pady=(10, 0))
 
+        appearance_frame = ttk.LabelFrame(
+            self.settings_tab, text=self.t("settings.appearance_group"), padding=18
+        )
+        appearance_frame.grid(row=2, column=0, sticky="ew", pady=(0, 14))
+        appearance_frame.columnconfigure(0, weight=1)
+        ttk.Label(
+            appearance_frame,
+            text=self.t("settings.theme"),
+            style="Body.TLabel",
+        ).grid(row=0, column=0, sticky="w")
+
+        self.theme_system_radio = ttk.Radiobutton(
+            appearance_frame,
+            text=self.t("settings.theme.system"),
+            value=THEME_SYSTEM,
+            variable=self.theme_mode_var,
+            command=self._on_theme_mode_changed,
+        )
+        self.theme_system_radio.grid(row=1, column=0, sticky="w", pady=(8, 0))
+
+        self.theme_light_radio = ttk.Radiobutton(
+            appearance_frame,
+            text=self.t("settings.theme.light"),
+            value=THEME_LIGHT,
+            variable=self.theme_mode_var,
+            command=self._on_theme_mode_changed,
+        )
+        self.theme_light_radio.grid(row=2, column=0, sticky="w", pady=(6, 0))
+
+        self.theme_dark_radio = ttk.Radiobutton(
+            appearance_frame,
+            text=self.t("settings.theme.dark"),
+            value=THEME_DARK,
+            variable=self.theme_mode_var,
+            command=self._on_theme_mode_changed,
+        )
+        self.theme_dark_radio.grid(row=3, column=0, sticky="w", pady=(6, 0))
+
+        ttk.Label(
+            appearance_frame,
+            text=self.t("settings.appearance_hint"),
+            wraplength=640,
+            justify=tk.LEFT,
+            style="Hint.TLabel",
+        ).grid(row=4, column=0, sticky="w", pady=(10, 0))
+
         current_frame = ttk.LabelFrame(
             self.settings_tab, text=self.t("settings.current_group"), padding=18
         )
-        current_frame.grid(row=2, column=0, sticky="nsew")
+        current_frame.grid(row=3, column=0, sticky="nsew")
         current_frame.columnconfigure(0, weight=1)
         current_frame.rowconfigure(0, weight=1)
         ttk.Label(
@@ -462,6 +880,79 @@ class KeyboardControlApp(tk.Tk):
         reason = str(device.get("reason", "") or "unknown")
         return self.t(f"control.device.kind.{reason}")
 
+    def _group_section_key(self, group):
+        reason = str(group.get("reason", "") or "").lower()
+        if reason in {"acpi_ps2", "keyboard_controller", "converted_device"}:
+            return "builtin"
+        if reason in {"external_usb", "external_bluetooth", "external_hid", "hid_keyboard"}:
+            return "external"
+        if reason == "virtual_remote":
+            return "virtual"
+        return "other"
+
+    def _group_state_key(self, group):
+        members = list(group.get("member_devices", []))
+        if not members:
+            return "unknown"
+        if all(self._device_is_marked_disabled(device) for device in members):
+            return "disabled"
+        if all(
+            device.get("present") and not self._device_is_marked_disabled(device)
+            for device in members
+        ):
+            return "enabled"
+        return "unknown"
+
+    def _group_state_text(self, group):
+        return self.t(f"control.device.state.{self._group_state_key(group)}")
+
+    def _group_state_style(self, group):
+        state_key = self._group_state_key(group)
+        return {
+            "enabled": "DeviceStateEnabled.TLabel",
+            "disabled": "DeviceStateDisabled.TLabel",
+            "unknown": "DeviceStateUnknown.TLabel",
+        }[state_key]
+
+    def _device_fingerprint(self, group):
+        member_ids = list(group.get("member_instance_ids", []))
+        if not member_ids:
+            return ""
+
+        first_id = str(member_ids[0]).upper()
+        match = re.search(r"VID_([0-9A-F]{4}).*PID_([0-9A-F]{4})", first_id)
+        if match:
+            return f"VID {match.group(1)} / PID {match.group(2)}"
+        if "CONVERTEDDEVICE" in first_id:
+            return "ConvertedDevice"
+        if first_id.startswith("HID\\GVINPUT"):
+            return "GVInput"
+        if first_id.startswith("ACPI\\"):
+            parts = first_id.split("\\")
+            if len(parts) > 1:
+                return parts[1]
+        if first_id.startswith("HID\\"):
+            parts = first_id.split("\\")
+            if len(parts) > 1:
+                return parts[1]
+        return first_id
+
+    def _device_primary_text(self, group):
+        display_name = str(group.get("display_name", "") or "").strip()
+        kind_text = self._device_kind_text(group)
+        fingerprint = self._device_fingerprint(group)
+        generic_names = {"", "HID KEYBOARD DEVICE", "HID KEYBOARD", "STANDARD PS/2 KEYBOARD"}
+
+        if display_name.upper() in generic_names:
+            if fingerprint:
+                return f"{kind_text} ({fingerprint})"
+            return kind_text
+
+        if display_name.upper() == "PS/2 标准键盘".upper() and fingerprint:
+            return f"{display_name} ({fingerprint})"
+
+        return display_name
+
     def _device_restart_text(self, device):
         requirement = device.get("restart_requirement")
         if requirement == RESTART_REQUIRED:
@@ -481,6 +972,28 @@ class KeyboardControlApp(tk.Tk):
         if not device.get("present", True):
             parts.append(self.t("control.device.not_present"))
         return " · ".join(parts)
+
+    def _device_meta_text(self, device):
+        parts = [
+            self._device_kind_text(device),
+            self.t("control.device.restart.label", value=self._device_restart_text(device)),
+        ]
+        member_count = int(device.get("member_count", 0) or 0)
+        if member_count > 1:
+            parts.append(self.t("control.device.members", count=member_count))
+        if device.get("recommended_selected"):
+            parts.append(self.t("control.device.selection.recommended"))
+        if not device.get("present", True):
+            parts.append(self.t("control.device.not_present"))
+        return " | ".join(parts)
+
+    def _instant_mode_reboot_likely(self):
+        groups = self._available_groups()
+        if not groups:
+            return False
+        return not any(
+            group.get("restart_requirement") == RESTART_USUALLY_NOT_REQUIRED for group in groups
+        )
 
     def _on_device_list_configure(self, _event=None):
         if hasattr(self, "device_canvas"):
@@ -577,6 +1090,97 @@ class KeyboardControlApp(tk.Tk):
         self.update_idletasks()
         self._on_device_list_configure()
 
+    def _rebuild_device_list(self):
+        if not hasattr(self, "device_list_container"):
+            return
+
+        for child in self.device_list_container.winfo_children():
+            child.destroy()
+
+        self._device_vars = {}
+        self._device_checkbuttons = []
+
+        available_groups = self._available_groups()
+        selected_keys = {
+            group.get("group_key", "")
+            for group in self.control_context.get("instant_selected_target_groups", [])
+        }
+
+        if not available_groups:
+            ttk.Label(
+                self.device_list_container,
+                text=self.t("control.device.empty"),
+                style="Hint.TLabel",
+                wraplength=440,
+                justify=tk.LEFT,
+            ).grid(row=0, column=0, sticky="w")
+            return
+
+        grouped_sections = {"builtin": [], "external": [], "virtual": [], "other": []}
+        for group in available_groups:
+            grouped_sections[self._group_section_key(group)].append(group)
+
+        row_index = 0
+        for section_key in ("builtin", "external", "virtual", "other"):
+            section_groups = grouped_sections.get(section_key, [])
+            if not section_groups:
+                continue
+
+            if row_index > 0:
+                ttk.Separator(self.device_list_container).grid(
+                    row=row_index,
+                    column=0,
+                    sticky="ew",
+                    pady=(2, 8),
+                )
+                row_index += 1
+
+            ttk.Label(
+                self.device_list_container,
+                text=self.t(f"control.device.section.{section_key}"),
+                style="DeviceSection.TLabel",
+            ).grid(row=row_index, column=0, sticky="w", pady=(0, 4))
+            row_index += 1
+
+            for group in section_groups:
+                group_key = group.get("group_key", "")
+                row_frame = ttk.Frame(self.device_list_container)
+                row_frame.grid(row=row_index, column=0, sticky="ew", pady=(0, 4))
+                row_frame.columnconfigure(0, weight=1)
+                row_frame.columnconfigure(1, weight=0)
+
+                variable = tk.BooleanVar(value=group_key in selected_keys)
+                self._device_vars[group_key] = variable
+
+                check = ttk.Checkbutton(
+                    row_frame,
+                    text=self._device_primary_text(group),
+                    variable=variable,
+                    command=self._on_device_selection_changed,
+                    style="Device.TCheckbutton",
+                )
+                check.grid(row=0, column=0, sticky="w")
+                self._device_checkbuttons.append(check)
+
+                ttk.Label(
+                    row_frame,
+                    text=self._group_state_text(group),
+                    style=self._group_state_style(group),
+                ).grid(row=0, column=1, sticky="e", padx=(8, 0))
+
+                ttk.Label(
+                    row_frame,
+                    text=self._device_meta_text(group),
+                    style="DeviceMeta.TLabel",
+                    wraplength=390,
+                    justify=tk.LEFT,
+                ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(1, 0))
+
+                row_index += 1
+
+        self.update_idletasks()
+        self._on_device_list_configure()
+
     def _refresh_control_context(self):
         refreshed = get_keyboard_control_context(self.settings.get("instant_target_ids"))
         self.control_context = dict(refreshed)
@@ -669,6 +1273,108 @@ class KeyboardControlApp(tk.Tk):
 
         self.status_var.set(status_text)
 
+        if effective_state is True:
+            self.disable_button.configure(style="Primary.TButton")
+            self.enable_button.configure(style="Secondary.TButton")
+        elif effective_state is False:
+            self.disable_button.configure(style="Secondary.TButton")
+            self.enable_button.configure(style="Primary.TButton")
+        else:
+            self.disable_button.configure(style="Secondary.TButton")
+            self.enable_button.configure(style="Secondary.TButton")
+
+        can_operate = current_mode != CONTROL_MODE_INSTANT or selected_count > 0
+        if not can_operate:
+            self.disable_button.state(["disabled"])
+            self.enable_button.state(["disabled"])
+        elif effective_state is True:
+            self.enable_button.state(["disabled"])
+            self.disable_button.state(["!disabled"])
+        elif effective_state is False:
+            self.disable_button.state(["disabled"])
+            self.enable_button.state(["!disabled"])
+        else:
+            self.disable_button.state(["!disabled"])
+            self.enable_button.state(["!disabled"])
+
+    def _update_control_state(self):
+        if self.control_context.get("instant_available"):
+            self.instant_mode_radio.state(["!disabled"])
+        else:
+            self.instant_mode_radio.state(["disabled"])
+            self.control_mode_var.set(CONTROL_MODE_DRIVER)
+
+        self._apply_selected_targets_from_ui()
+
+        current_mode = self._current_mode()
+        effective_state = self._active_state()
+        available_targets = self._available_groups()
+        selected_groups = self._selected_groups()
+        selected_count = len(selected_groups)
+        total_count = len(available_targets)
+        ignored_count = len(self.control_context.get("instant_ignored_devices", []))
+        reboot_likely = self._instant_mode_reboot_likely()
+
+        if current_mode == CONTROL_MODE_INSTANT:
+            if reboot_likely:
+                self.subtitle_var.set(self.t("control.subtitle.instant_limited"))
+                self.hint_var.set(self.t("hint.body.instant_limited"))
+            else:
+                self.subtitle_var.set(self.t("control.subtitle.instant"))
+                self.hint_var.set(self.t("hint.body.instant"))
+            self.mode_description_var.set(
+                self.t("control.mode.instant_summary", count=total_count)
+            )
+            if total_count:
+                if reboot_likely:
+                    self.device_caption_var.set(self.t("control.device.caption.instant_limited"))
+                else:
+                    self.device_caption_var.set(self.t("control.device.caption.instant"))
+            else:
+                self.device_caption_var.set(self.t("control.device.caption.empty"))
+        else:
+            self.subtitle_var.set(self.t("control.subtitle.driver"))
+            self.mode_description_var.set(self.t("control.mode.driver_summary"))
+            self.hint_var.set(self.t("hint.body.driver"))
+            if total_count:
+                self.device_caption_var.set(self.t("control.device.caption.driver"))
+            else:
+                self.device_caption_var.set(self.t("control.device.caption.empty"))
+
+        if total_count:
+            self.device_summary_var.set(
+                self.t(
+                    "control.device.summary",
+                    selected=selected_count,
+                    total=total_count,
+                    ignored=ignored_count,
+                )
+            )
+        else:
+            self.device_summary_var.set(self.t("control.mode.instant_unavailable"))
+
+        if current_mode == CONTROL_MODE_INSTANT and total_count and selected_count == 0:
+            status_text = self.t("status.no_selection")
+        elif effective_state is None:
+            status_text = self.t("status.unknown")
+        else:
+            status_text = self.t("status.enabled") if effective_state else self.t("status.disabled")
+
+        if current_mode == CONTROL_MODE_DRIVER and self.pending_driver_state is not None:
+            status_text = f"{status_text}{self.t('status.pending')}"
+
+        self.status_var.set(status_text)
+
+        if effective_state is True:
+            self.disable_button.configure(style="Primary.TButton")
+            self.enable_button.configure(style="Secondary.TButton")
+        elif effective_state is False:
+            self.disable_button.configure(style="Secondary.TButton")
+            self.enable_button.configure(style="Primary.TButton")
+        else:
+            self.disable_button.configure(style="Secondary.TButton")
+            self.enable_button.configure(style="Secondary.TButton")
+
         can_operate = current_mode != CONTROL_MODE_INSTANT or selected_count > 0
         if not can_operate:
             self.disable_button.state(["disabled"])
@@ -693,7 +1399,11 @@ class KeyboardControlApp(tk.Tk):
         else:
             summary = self.t("settings.status.enabled_visible")
 
-        summary_lines = [summary, self.t("settings.mode.current", mode=self._current_mode_label())]
+        summary_lines = [
+            summary,
+            self.t("settings.mode.current", mode=self._current_mode_label()),
+            self._current_theme_label(),
+        ]
         if self._available_groups():
             summary_lines.append(
                 self.t("settings.targets.current", count=len(self._selected_groups()))
@@ -810,6 +1520,7 @@ class KeyboardControlApp(tk.Tk):
             "autostart_enabled": bool(self.autostart_var.get()),
             "start_minimized_to_tray": bool(self.minimize_to_tray_var.get()),
             "preferred_control_mode": self._current_mode(),
+            "theme_mode": normalize_theme_mode(self.theme_mode_var.get()),
             "instant_target_ids": list(self._selected_target_ids()),
         }
 
@@ -832,9 +1543,13 @@ class KeyboardControlApp(tk.Tk):
             self.settings.update(new_settings)
 
         self.settings["preferred_control_mode"] = new_settings["preferred_control_mode"]
+        self.settings["theme_mode"] = new_settings["theme_mode"]
         self.settings["instant_target_ids"] = list(new_settings["instant_target_ids"])
         self.autostart_var.set(bool(self.settings.get("autostart_enabled")))
         self.minimize_to_tray_var.set(bool(self.settings.get("start_minimized_to_tray")))
+        self.theme_mode_var.set(normalize_theme_mode(self.settings.get("theme_mode")))
+        self._apply_theme()
+        self._update_control_state()
         self._refresh_startup_controls()
         self._update_settings_summary()
         self._show_info(self.t("settings.saved"))
