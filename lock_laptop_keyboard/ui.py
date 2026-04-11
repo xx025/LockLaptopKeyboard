@@ -1,7 +1,32 @@
 import queue
 import re
-import tkinter as tk
-from tkinter import font as tkfont, messagebox, ttk
+
+from PyQt5.QtCore import QTimer, Qt
+from PyQt5.QtGui import QCloseEvent, QIcon, QShowEvent
+from PyQt5.QtWidgets import (
+    QApplication,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QScrollArea,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
+from qfluentwidgets import (
+    CardWidget,
+    CheckBox,
+    FluentIcon as FIF,
+    FluentWindow,
+    NavigationWidget,
+    PrimaryPushButton,
+    PushButton,
+    RadioButton,
+    Theme,
+    setTheme,
+)
 
 from .constants import (
     CONTROL_MODE_DRIVER,
@@ -16,7 +41,6 @@ from .constants import (
     TRAY_COMMAND_REBOOT,
     TRAY_COMMAND_SHOW,
 )
-from .resources import resource_path
 from .settings import (
     autostart_supported,
     normalize_theme_mode,
@@ -25,6 +49,7 @@ from .settings import (
     set_autostart_enabled,
     sync_settings_with_system,
 )
+from .resources import resource_path
 from .system_control import (
     RESTART_REQUIRED,
     RESTART_USUALLY_NOT_REQUIRED,
@@ -38,61 +63,43 @@ from .system_control import (
 from .tray import TrayIcon
 
 
-THEME_PALETTES = {
+THEME_COLORS = {
     THEME_LIGHT: {
-        "page_bg": "#f3f3f3",
-        "surface_bg": "#ffffff",
-        "surface_alt_bg": "#f6f6f6",
+        "page_bg": "#f5f6f8",
+        "nav_bg": "#fafbfc",
         "card_bg": "#ffffff",
-        "border": "#e5e5e5",
-        "text_primary": "#1c1c1c",
-        "text_secondary": "#5f5f5f",
-        "text_muted": "#8b8b8b",
-        "accent": "#005fb8",
-        "accent_active": "#004e98",
-        "accent_text": "#ffffff",
-        "focus": "#99c5ff",
-        "button_secondary_bg": "#f5f5f5",
-        "button_secondary_active": "#ececec",
-        "button_secondary_border": "#d9d9d9",
-        "tab_bg": "#ebebeb",
-        "tab_active_bg": "#f5f5f5",
-        "tab_selected_bg": "#ffffff",
-        "scrollbar_bg": "#d4d4d4",
-        "scrollbar_active_bg": "#bdbdbd",
+        "card_alt_bg": "#f7f8fa",
+        "tab_bg": "#eef3f8",
+        "tab_selected_bg": "#e7f1fb",
+        "border": "#e2e5ea",
+        "text_primary": "#1c1f24",
+        "text_secondary": "#5f6775",
+        "text_muted": "#8690a0",
+        "accent": "#0f6cbd",
         "status_enabled": "#107c10",
         "status_disabled": "#d13438",
         "status_unknown": "#a15c00",
     },
     THEME_DARK: {
-        "page_bg": "#202020",
-        "surface_bg": "#2b2b2b",
-        "surface_alt_bg": "#323232",
-        "card_bg": "#2b2b2b",
-        "border": "#3d3d3d",
-        "text_primary": "#f5f5f5",
-        "text_secondary": "#d0d0d0",
-        "text_muted": "#a0a0a0",
-        "accent": "#60cdff",
-        "accent_active": "#7ad8ff",
-        "accent_text": "#082038",
-        "focus": "#88d9ff",
-        "button_secondary_bg": "#323232",
-        "button_secondary_active": "#3a3a3a",
-        "button_secondary_border": "#474747",
-        "tab_bg": "#2a2a2a",
-        "tab_active_bg": "#323232",
-        "tab_selected_bg": "#383838",
-        "scrollbar_bg": "#4b4b4b",
-        "scrollbar_active_bg": "#5c5c5c",
-        "status_enabled": "#6ccb5f",
-        "status_disabled": "#ff99a4",
+        "page_bg": "#1f2228",
+        "nav_bg": "#252a32",
+        "card_bg": "#2b313a",
+        "card_alt_bg": "#303742",
+        "tab_bg": "#2d3847",
+        "tab_selected_bg": "#244a71",
+        "border": "#3a4350",
+        "text_primary": "#eef2f7",
+        "text_secondary": "#cbd3df",
+        "text_muted": "#9aa6b7",
+        "accent": "#5bbcff",
+        "status_enabled": "#7fda71",
+        "status_disabled": "#ff8f9c",
         "status_unknown": "#f0bf65",
     },
 }
 
 
-class KeyboardControlApp(tk.Tk):
+class KeyboardControlApp(FluentWindow):
     def __init__(self, control_context, i18n, settings, launched_from_autostart=False):
         super().__init__()
         self.i18n = i18n
@@ -101,673 +108,336 @@ class KeyboardControlApp(tk.Tk):
         self.settings.update(settings or {})
         self.launched_from_autostart = launched_from_autostart
         self.control_context = dict(control_context or {})
+
         self.pending_driver_state = None
         self._tray_icon = None
         self._tray_queue = queue.Queue()
         self._closing = False
-        self._device_vars = {}
-        self._device_checkbuttons = []
-        self._device_canvas_window = None
-        self.style = None
-        self._theme_colors = THEME_PALETTES[THEME_LIGHT]
+        self._device_checkboxes = {}
+        self._theme_colors = dict(THEME_COLORS[THEME_LIGHT])
         self._applied_theme_mode = None
+        self._theme_mode = THEME_SYSTEM
+        self._mode_change_guard = False
+        self._theme_change_guard = False
+        self._post_show_theme_synced = False
 
-        self.status_var = tk.StringVar()
-        self.subtitle_var = tk.StringVar()
-        self.summary_var = tk.StringVar()
-        self.mode_description_var = tk.StringVar()
-        self.device_summary_var = tk.StringVar()
-        self.device_caption_var = tk.StringVar()
-        self.hint_var = tk.StringVar()
-        self.language_var = tk.StringVar(
-            value=self.t("settings.language", language=self.i18n.language_name)
-        )
-        self.autostart_var = tk.BooleanVar(value=bool(self.settings.get("autostart_enabled")))
-        self.minimize_to_tray_var = tk.BooleanVar(
-            value=bool(self.settings.get("start_minimized_to_tray"))
-        )
-        self.theme_mode_var = tk.StringVar(value=self._resolve_initial_theme_mode())
-        self.control_mode_var = tk.StringVar(value=self._resolve_initial_control_mode())
-
-        self._configure_window()
         self._build_ui()
+        self._configure_window()
+        self._set_control_mode(self._resolve_initial_control_mode())
+        self._set_theme_mode(self._resolve_initial_theme_mode())
+        self.autostart_checkbox.setChecked(bool(self.settings.get("autostart_enabled")))
+        self.minimize_checkbox.setChecked(bool(self.settings.get("start_minimized_to_tray")))
         self._apply_theme()
+        self._refresh_startup_controls()
         self._rebuild_device_list()
-        self._start_tray()
         self._update_control_state()
         self._update_settings_summary()
+        self._start_tray()
 
-        self.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
-        self.after(150, self._poll_tray_commands)
-        self.after(300, self._refresh_control_context)
-        self.after(1200, self._poll_theme_changes)
+        self._tray_timer = QTimer(self)
+        self._tray_timer.timeout.connect(self._poll_tray_commands)
+        self._tray_timer.start(150)
+
+        self._theme_timer = QTimer(self)
+        self._theme_timer.timeout.connect(self._poll_theme_changes)
+        self._theme_timer.start(1200)
+
+        QTimer.singleShot(300, self._refresh_control_context)
 
         if self._active_state() is None and not self._should_start_hidden():
-            self.after(250, self._show_unknown_state_warning)
-
+            QTimer.singleShot(260, self._show_unknown_state_warning)
         if self._should_start_hidden() and self._tray_icon is not None:
-            self.after(200, self.hide_to_tray)
+            QTimer.singleShot(220, self.hide_to_tray)
 
-    def _resolve_initial_theme_mode(self):
-        return normalize_theme_mode(self.settings.get("theme_mode"))
+    def mainloop(self):
+        app = QApplication.instance()
+        if app is None:
+            raise RuntimeError("QApplication is not initialized.")
+        self.show()
+        return app.exec()
 
-    def _effective_theme_mode(self):
-        return resolve_theme_mode(self.theme_mode_var.get())
+    def _create_card(self, name="panelCard", margin=(12, 10, 12, 10), spacing=8):
+        card = CardWidget()
+        card.setObjectName(name)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(*margin)
+        layout.setSpacing(spacing)
+        return card, layout
 
-    def _current_theme_label(self):
-        selected_theme = normalize_theme_mode(self.theme_mode_var.get())
-        selected_label = self.t(f"settings.theme.{selected_theme}")
-        if selected_theme == THEME_SYSTEM:
-            effective_label = self.t(f"settings.theme.{self._effective_theme_mode()}")
-            return self.t(
-                "settings.theme.current_system",
-                theme=selected_label,
-                effective=effective_label,
-            )
-        return self.t("settings.theme.current", theme=selected_label)
+    def _label(self, text="", name="", wrap=False):
+        label = QLabel(text, self)
+        if name:
+            label.setObjectName(name)
+        label.setWordWrap(wrap)
+        label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        return label
 
-    def _pick_font_family(self, available_fonts, *candidates):
-        for candidate in candidates:
-            if candidate in available_fonts:
-                return candidate
-        return "TkDefaultFont"
+    def _clean_ui_text(self, text):
+        normalized = str(text or "")
+        normalized = re.sub(r"^[^\w\u4e00-\u9fffA-Za-z]+", "", normalized).strip()
+        normalized = re.sub(r"\s{2,}", " ", normalized)
+        return normalized
 
-    def _apply_theme(self):
-        effective_theme = self._effective_theme_mode()
-        self._theme_colors = dict(THEME_PALETTES[effective_theme])
-        self._applied_theme_mode = effective_theme
-        colors = self._theme_colors
-
-        if self.style is None:
-            self.style = ttk.Style(self)
-
-        available_themes = self.style.theme_names()
-        if "clam" in available_themes:
-            self.style.theme_use("clam")
-        elif "alt" in available_themes:
-            self.style.theme_use("alt")
-
-        available_fonts = set(tkfont.families())
-        if self.i18n.language.startswith("zh"):
-            body_font = self._pick_font_family(
-                available_fonts,
-                "Microsoft YaHei UI",
-                "Segoe UI",
-                "TkDefaultFont",
-            )
-            title_font = self._pick_font_family(
-                available_fonts,
-                "Microsoft YaHei UI",
-                "Segoe UI Semibold",
-                body_font,
-            )
-        else:
-            body_font = self._pick_font_family(
-                available_fonts,
-                "Segoe UI Variable Text",
-                "Segoe UI",
-                "TkDefaultFont",
-            )
-            title_font = self._pick_font_family(
-                available_fonts,
-                "Segoe UI Variable Display",
-                "Segoe UI Semibold",
-                body_font,
-            )
-
-        self.configure(bg=colors["page_bg"])
-
-        self.style.configure(
-            ".",
-            background=colors["card_bg"],
-            foreground=colors["text_primary"],
-            font=(body_font, 10),
-        )
-        self.style.map(".", foreground=[("disabled", colors["text_muted"])])
-
-        self.style.configure("TFrame", background=colors["card_bg"])
-        self.style.configure("Page.TFrame", background=colors["page_bg"], padding=16)
-        self.style.configure(
-            "Card.TFrame",
-            background=colors["card_bg"],
-            padding=18,
-            borderwidth=1,
-            bordercolor=colors["border"],
-            lightcolor=colors["border"],
-            darkcolor=colors["border"],
-            relief="solid",
-        )
-
-        self.style.configure("TLabel", background=colors["card_bg"], foreground=colors["text_primary"])
-        self.style.configure(
-            "Title.TLabel",
-            background=colors["card_bg"],
-            foreground=colors["text_primary"],
-            font=(title_font, 18, "bold"),
-        )
-        self.style.configure(
-            "Subtitle.TLabel",
-            background=colors["card_bg"],
-            foreground=colors["text_secondary"],
-            font=(body_font, 10),
-        )
-        self.style.configure(
-            "SectionTitle.TLabel",
-            background=colors["card_bg"],
-            foreground=colors["text_primary"],
-            font=(body_font, 10, "bold"),
-        )
-        self.style.configure(
-            "Body.TLabel",
-            background=colors["card_bg"],
-            foreground=colors["text_primary"],
-            font=(body_font, 10),
-        )
-        self.style.configure(
-            "Hint.TLabel",
-            background=colors["card_bg"],
-            foreground=colors["text_secondary"],
-            font=(body_font, 9),
-        )
-        self.style.configure(
-            "StatusValue.TLabel",
-            background=colors["card_bg"],
-            foreground=colors["text_primary"],
-            font=(title_font, 16, "bold"),
-        )
-        self.style.configure(
-            "DeviceSection.TLabel",
-            background=colors["card_bg"],
-            foreground=colors["accent"],
-            font=(body_font, 10, "bold"),
-        )
-        self.style.configure(
-            "DeviceMeta.TLabel",
-            background=colors["card_bg"],
-            foreground=colors["text_secondary"],
-            font=(body_font, 9),
-        )
-        self.style.configure(
-            "DeviceId.TLabel",
-            background=colors["card_bg"],
-            foreground=colors["text_muted"],
-            font=(body_font, 9),
-        )
-        self.style.configure(
-            "DeviceStateEnabled.TLabel",
-            background=colors["card_bg"],
-            foreground=colors["status_enabled"],
-            font=(body_font, 9, "bold"),
-        )
-        self.style.configure(
-            "DeviceStateDisabled.TLabel",
-            background=colors["card_bg"],
-            foreground=colors["status_disabled"],
-            font=(body_font, 9, "bold"),
-        )
-        self.style.configure(
-            "DeviceStateUnknown.TLabel",
-            background=colors["card_bg"],
-            foreground=colors["status_unknown"],
-            font=(body_font, 9, "bold"),
-        )
-
-        self.style.configure(
-            "TLabelframe",
-            background=colors["card_bg"],
-            bordercolor=colors["border"],
-            lightcolor=colors["border"],
-            darkcolor=colors["border"],
-            relief="solid",
-            borderwidth=1,
-        )
-        self.style.configure(
-            "TLabelframe.Label",
-            background=colors["card_bg"],
-            foreground=colors["text_primary"],
-            font=(body_font, 10, "bold"),
-        )
-
-        self.style.configure(
-            "TButton",
-            background=colors["button_secondary_bg"],
-            foreground=colors["text_primary"],
-            bordercolor=colors["button_secondary_border"],
-            lightcolor=colors["button_secondary_border"],
-            darkcolor=colors["button_secondary_border"],
-            focusthickness=1,
-            relief="solid",
-            padding=(14, 10),
-            font=(body_font, 10),
-        )
-        self.style.map(
-            "TButton",
-            background=[
-                ("disabled", colors["surface_alt_bg"]),
-                ("pressed", colors["button_secondary_active"]),
-                ("active", colors["button_secondary_active"]),
-            ],
-            foreground=[
-                ("disabled", colors["text_muted"]),
-                ("pressed", colors["text_primary"]),
-                ("active", colors["text_primary"]),
-            ],
-        )
-        self.style.configure("Secondary.TButton", padding=(14, 10))
-        self.style.configure(
-            "Primary.TButton",
-            background=colors["accent"],
-            foreground=colors["accent_text"],
-            bordercolor=colors["accent"],
-            lightcolor=colors["accent"],
-            darkcolor=colors["accent"],
-            padding=(14, 10),
-        )
-        self.style.map(
-            "Primary.TButton",
-            background=[
-                ("disabled", colors["surface_alt_bg"]),
-                ("pressed", colors["accent_active"]),
-                ("active", colors["accent_active"]),
-            ],
-            foreground=[
-                ("disabled", colors["text_muted"]),
-                ("pressed", colors["accent_text"]),
-                ("active", colors["accent_text"]),
-            ],
-        )
-
-        self.style.configure(
-            "TRadiobutton",
-            background=colors["card_bg"],
-            foreground=colors["text_primary"],
-            font=(body_font, 10),
-            padding=(0, 2),
-        )
-        self.style.map(
-            "TRadiobutton",
-            background=[("active", colors["card_bg"])],
-            foreground=[("disabled", colors["text_muted"])],
-        )
-
-        self.style.configure(
-            "TCheckbutton",
-            background=colors["card_bg"],
-            foreground=colors["text_primary"],
-            font=(body_font, 10),
-            padding=(0, 2),
-        )
-        self.style.map(
-            "TCheckbutton",
-            background=[("active", colors["card_bg"])],
-            foreground=[("disabled", colors["text_muted"])],
-        )
-        self.style.configure(
-            "Device.TCheckbutton",
-            background=colors["card_bg"],
-            foreground=colors["text_primary"],
-            font=(body_font, 10, "bold"),
-        )
-
-        self.style.configure(
-            "TNotebook",
-            background=colors["page_bg"],
-            borderwidth=0,
-            tabmargins=(0, 0, 0, 10),
-        )
-        self.style.configure(
-            "TNotebook.Tab",
-            background=colors["tab_bg"],
-            foreground=colors["text_secondary"],
-            bordercolor=colors["border"],
-            padding=(16, 9),
-            font=(body_font, 10),
-        )
-        self.style.map(
-            "TNotebook.Tab",
-            background=[
-                ("selected", colors["tab_selected_bg"]),
-                ("active", colors["tab_active_bg"]),
-            ],
-            foreground=[
-                ("selected", colors["text_primary"]),
-                ("active", colors["text_primary"]),
-            ],
-        )
-
-        self.style.configure(
-            "TScrollbar",
-            background=colors["scrollbar_bg"],
-            troughcolor=colors["page_bg"],
-            bordercolor=colors["page_bg"],
-            arrowcolor=colors["text_primary"],
-        )
-        self.style.map(
-            "TScrollbar",
-            background=[("active", colors["scrollbar_active_bg"])],
-        )
-        self.style.configure("DeviceList.Vertical.TScrollbar", arrowsize=12)
-        self.style.configure("TSeparator", background=colors["border"])
-
-        if hasattr(self, "device_canvas"):
-            self.device_canvas.configure(background=colors["card_bg"])
-
-    def _on_theme_mode_changed(self):
-        self._apply_theme()
-        self._update_control_state()
-        self._update_settings_summary()
-
-    def _poll_theme_changes(self):
-        if self._closing:
-            return
-
-        if normalize_theme_mode(self.theme_mode_var.get()) == THEME_SYSTEM:
-            effective_theme = self._effective_theme_mode()
-            if effective_theme != self._applied_theme_mode:
-                self._apply_theme()
-                self._update_control_state()
-                self._update_settings_summary()
-
-        self.after(1200, self._poll_theme_changes)
-
-    def _configure_window(self):
-        self.title(self.t("app.title"))
-        self.geometry("900x640")
-        self.minsize(820, 580)
-        self.style = ttk.Style(self)
-
-        try:
-            self.iconbitmap(resource_path("img", "icon.ico"))
-        except tk.TclError:
-            pass
+    def _ui_text(self, key, **kwargs):
+        return self._clean_ui_text(self.t(key, **kwargs))
 
     def _build_ui(self):
-        container = ttk.Frame(self, style="Page.TFrame")
-        container.pack(fill=tk.BOTH, expand=True)
-        container.columnconfigure(0, weight=1)
-        container.rowconfigure(0, weight=1)
-
-        notebook = ttk.Notebook(container)
-        notebook.grid(row=0, column=0, sticky="nsew")
-
-        self.control_tab = ttk.Frame(notebook, padding=16, style="Page.TFrame")
-        self.settings_tab = ttk.Frame(notebook, padding=16, style="Page.TFrame")
-        notebook.add(self.control_tab, text=self.t("tab.control"))
-        notebook.add(self.settings_tab, text=self.t("tab.settings"))
-
+        self.control_tab = QWidget(self)
+        self.control_tab.setObjectName("controlTab")
+        self.settings_tab = QWidget(self)
+        self.settings_tab.setObjectName("settingsTab")
         self._build_control_tab()
         self._build_settings_tab()
 
+        self.nav_top_spacer = NavigationWidget(False, self)
+        self.nav_top_spacer.setObjectName("navTopSpacer")
+        self.nav_top_spacer.setFixedHeight(48)
+        self.navigationInterface.addWidget("app.topSpacer", self.nav_top_spacer)
+
+        self.addSubInterface(self.control_tab, FIF.IOT, self._ui_text("tab.control"))
+        self.addSubInterface(self.settings_tab, FIF.SETTING, self._ui_text("tab.settings"))
+        self.switchTo(self.control_tab)
+
+    def _sync_navigation_top_spacer(self):
+        if not hasattr(self, "nav_top_spacer") or self.nav_top_spacer is None:
+            return
+
+        title_height = 0
+        if hasattr(self, "systemTitleBarRect"):
+            try:
+                title_height = int(self.systemTitleBarRect().height())
+            except Exception:
+                title_height = 0
+
+        if title_height <= 0 and hasattr(self, "titleBar"):
+            try:
+                title_height = int(self.titleBar.height())
+            except Exception:
+                title_height = 0
+
+        self.nav_top_spacer.setFixedHeight(max(44, title_height + 12))
+
     def _build_control_tab(self):
-        self.control_tab.columnconfigure(0, weight=3)
-        self.control_tab.columnconfigure(1, weight=2)
-        self.control_tab.rowconfigure(2, weight=1)
+        layout = QVBoxLayout(self.control_tab)
+        layout.setContentsMargins(28, 22, 28, 20)
+        layout.setSpacing(12)
 
-        header = ttk.Frame(self.control_tab, style="Card.TFrame")
-        header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
-        header.columnconfigure(0, weight=1)
-        ttk.Label(header, text=self.t("control.title"), style="Title.TLabel").grid(
-            row=0, column=0, sticky="w"
-        )
-        ttk.Label(header, textvariable=self.subtitle_var, style="Subtitle.TLabel").grid(
-            row=1, column=0, sticky="w", pady=(6, 0)
-        )
+        self.title_label = self._label(self._ui_text("control.title"), "pageTitleLabel")
+        self.subtitle_label = self._label("", "pageSubtitleLabel", True)
+        layout.addWidget(self.title_label)
+        layout.addWidget(self.subtitle_label)
 
-        status_frame = ttk.LabelFrame(self.control_tab, text=self.t("status.group"), padding=14)
-        status_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 8), pady=(0, 12))
-        status_frame.columnconfigure(0, weight=1)
-        ttk.Label(status_frame, text=self.t("status.label"), style="SectionTitle.TLabel").grid(
-            row=0, column=0, sticky="w"
-        )
-        ttk.Label(status_frame, textvariable=self.status_var, style="StatusValue.TLabel").grid(
-            row=1, column=0, sticky="w", pady=(8, 2)
-        )
-        ttk.Label(
-            status_frame,
-            textvariable=self.device_summary_var,
-            style="Hint.TLabel",
-            wraplength=420,
-            justify=tk.LEFT,
-        ).grid(row=2, column=0, sticky="w")
+        summary_bar = QWidget(self.control_tab)
+        summary_bar.setObjectName("summaryBar")
+        summary_layout = QHBoxLayout(summary_bar)
+        summary_layout.setContentsMargins(14, 10, 14, 10)
+        summary_layout.setSpacing(18)
 
-        mode_frame = ttk.LabelFrame(
-            self.control_tab, text=self.t("control.mode_group"), padding=14
-        )
-        mode_frame.grid(row=1, column=1, sticky="nsew", pady=(0, 12))
-        mode_frame.columnconfigure(0, weight=1)
-        self.instant_mode_radio = ttk.Radiobutton(
-            mode_frame,
-            text=self.t("control.mode.instant"),
-            value=CONTROL_MODE_INSTANT,
-            variable=self.control_mode_var,
-            command=self._on_control_mode_changed,
-        )
-        self.instant_mode_radio.grid(row=0, column=0, sticky="w")
-        self.driver_mode_radio = ttk.Radiobutton(
-            mode_frame,
-            text=self.t("control.mode.driver"),
-            value=CONTROL_MODE_DRIVER,
-            variable=self.control_mode_var,
-            command=self._on_control_mode_changed,
-        )
-        self.driver_mode_radio.grid(row=1, column=0, sticky="w", pady=(6, 0))
-        ttk.Label(
-            mode_frame,
-            textvariable=self.mode_description_var,
-            style="Hint.TLabel",
-            wraplength=300,
-            justify=tk.LEFT,
-        ).grid(row=2, column=0, sticky="w", pady=(10, 0))
+        status_wrap = QWidget(summary_bar)
+        status_layout = QVBoxLayout(status_wrap)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.setSpacing(4)
+        status_layout.addWidget(self._label(self._ui_text("status.label"), "sectionLabel"))
+        self.status_value_label = self._label("", "statusValueLabel")
+        self.device_summary_label = self._label("", "hintLabel", True)
+        status_layout.addWidget(self.status_value_label)
+        status_layout.addWidget(self.device_summary_label)
+        status_layout.addStretch(1)
 
-        device_frame = ttk.LabelFrame(
-            self.control_tab, text=self.t("control.device_group"), padding=14
-        )
-        device_frame.grid(row=2, column=0, sticky="nsew", padx=(0, 8))
-        device_frame.columnconfigure(0, weight=1)
-        device_frame.rowconfigure(1, weight=1)
-        ttk.Label(
-            device_frame,
-            textvariable=self.device_caption_var,
-            style="Hint.TLabel",
-            wraplength=460,
-            justify=tk.LEFT,
-        ).grid(row=0, column=0, sticky="w", pady=(0, 10))
-        device_list_shell = ttk.Frame(device_frame)
-        device_list_shell.grid(row=1, column=0, sticky="nsew")
-        device_list_shell.columnconfigure(0, weight=1)
-        device_list_shell.rowconfigure(0, weight=1)
+        mode_wrap = QWidget(summary_bar)
+        mode_layout = QVBoxLayout(mode_wrap)
+        mode_layout.setContentsMargins(0, 0, 0, 0)
+        mode_layout.setSpacing(4)
+        mode_layout.addWidget(self._label(self._ui_text("control.mode_group"), "sectionLabel"))
+        self.instant_mode_radio = RadioButton(self._ui_text("control.mode.instant"))
+        self.driver_mode_radio = RadioButton(self._ui_text("control.mode.driver"))
+        self.instant_mode_radio.toggled.connect(self._on_control_mode_changed)
+        self.driver_mode_radio.toggled.connect(self._on_control_mode_changed)
+        self.mode_description_label = self._label("", "hintLabel", True)
+        self.mode_description_label.setMaximumHeight(24)
+        mode_layout.addWidget(self.instant_mode_radio)
+        mode_layout.addWidget(self.driver_mode_radio)
+        mode_layout.addWidget(self.mode_description_label)
+        mode_layout.addStretch(1)
+        self.mode_description_label.hide()
 
-        self.device_canvas = tk.Canvas(
-            device_list_shell,
-            highlightthickness=0,
-            borderwidth=0,
-            background=self._theme_colors["card_bg"],
-        )
-        self.device_canvas.grid(row=0, column=0, sticky="nsew")
+        summary_layout.addWidget(status_wrap, stretch=3)
+        summary_layout.addWidget(mode_wrap, stretch=2)
+        layout.addWidget(summary_bar)
 
-        self.device_scrollbar = ttk.Scrollbar(
-            device_list_shell,
-            orient=tk.VERTICAL,
-            command=self.device_canvas.yview,
-            style="DeviceList.Vertical.TScrollbar",
-        )
-        self.device_scrollbar.grid(row=0, column=1, sticky="ns", padx=(8, 0))
-        self.device_canvas.configure(yscrollcommand=self.device_scrollbar.set)
+        body_layout = QHBoxLayout()
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(10)
 
-        self.device_list_container = ttk.Frame(self.device_canvas)
-        self.device_list_container.columnconfigure(0, weight=1)
-        self._device_canvas_window = self.device_canvas.create_window(
-            (0, 0),
-            window=self.device_list_container,
-            anchor="nw",
-        )
-        self.device_list_container.bind("<Configure>", self._on_device_list_configure)
-        self.device_canvas.bind("<Configure>", self._on_device_canvas_configure)
-        self.device_canvas.bind("<Enter>", self._bind_device_mousewheel)
-        self.device_canvas.bind("<Leave>", self._unbind_device_mousewheel)
+        device_card, device_layout = self._create_card(margin=(12, 10, 12, 10), spacing=7)
+        device_layout.addWidget(self._label(self._ui_text("control.device_group"), "sectionLabel"))
+        self.device_caption_label = self._label("", "hintLabel", True)
+        self.device_caption_label.setMaximumHeight(34)
+        device_layout.addWidget(self.device_caption_label)
 
-        side_panel = ttk.Frame(self.control_tab, style="Page.TFrame")
-        side_panel.grid(row=2, column=1, sticky="nsew")
-        side_panel.columnconfigure(0, weight=1)
+        self.device_scroll = QScrollArea(device_card)
+        self.device_scroll.setObjectName("deviceScroll")
+        self.device_scroll.setWidgetResizable(True)
+        self.device_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.device_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.device_list_content = QWidget(self.device_scroll)
+        self.device_list_content.setObjectName("deviceListContent")
+        self.device_list_layout = QVBoxLayout(self.device_list_content)
+        self.device_list_layout.setContentsMargins(2, 2, 2, 2)
+        self.device_list_layout.setSpacing(6)
+        self.device_scroll.setWidget(self.device_list_content)
+        device_layout.addWidget(self.device_scroll, stretch=1)
+        body_layout.addWidget(device_card, stretch=1)
 
-        action_frame = ttk.LabelFrame(
-            side_panel, text=self.t("control.action_group"), padding=14
-        )
-        action_frame.grid(row=0, column=0, sticky="ew")
-        action_frame.columnconfigure(0, weight=1)
-        action_frame.columnconfigure(1, weight=1)
-        self.disable_button = ttk.Button(
-            action_frame,
-            text=self.t("button.disable"),
-            style="Secondary.TButton",
-            command=lambda: self._apply_keyboard_state(False),
-        )
-        self.disable_button.grid(row=0, column=0, sticky="ew", padx=(0, 6), pady=(0, 10))
-        self.enable_button = ttk.Button(
-            action_frame,
-            text=self.t("button.enable"),
-            style="Primary.TButton",
-            command=lambda: self._apply_keyboard_state(True),
-        )
-        self.enable_button.grid(row=0, column=1, sticky="ew", pady=(0, 10))
-        self.refresh_button = ttk.Button(
-            action_frame,
-            text=self.t("button.refresh"),
-            style="Secondary.TButton",
-            command=self._refresh_state_from_system,
-        )
-        self.refresh_button.grid(row=1, column=0, sticky="ew", padx=(0, 6))
-        self.reboot_button = ttk.Button(
-            action_frame,
-            text=self.t("button.reboot"),
-            style="Secondary.TButton",
-            command=self._request_reboot,
-        )
-        self.reboot_button.grid(row=1, column=1, sticky="ew")
+        action_card, action_layout = self._create_card(margin=(12, 10, 12, 10), spacing=7)
+        action_card.setFixedWidth(312)
+        action_layout.addWidget(self._label(self._ui_text("control.action_group"), "sectionLabel"))
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(7)
+        grid.setVerticalSpacing(7)
+        self.disable_button = PushButton(self._ui_text("button.disable"))
+        self.enable_button = PrimaryPushButton(self._ui_text("button.enable"))
+        self.refresh_button = PushButton(self._ui_text("button.refresh"))
+        self.reboot_button = PushButton(self._ui_text("button.reboot"))
+        self.disable_button.setObjectName("actionButton")
+        self.enable_button.setObjectName("actionButton")
+        self.refresh_button.setObjectName("actionButton")
+        self.reboot_button.setObjectName("actionButton")
+        self.disable_button.clicked.connect(lambda: self._apply_keyboard_state(False))
+        self.enable_button.clicked.connect(lambda: self._apply_keyboard_state(True))
+        self.refresh_button.clicked.connect(self._refresh_state_from_system)
+        self.reboot_button.clicked.connect(self._request_reboot)
+        grid.addWidget(self.disable_button, 0, 0)
+        grid.addWidget(self.enable_button, 0, 1)
+        grid.addWidget(self.refresh_button, 1, 0)
+        grid.addWidget(self.reboot_button, 1, 1)
+        action_layout.addLayout(grid)
+        self.hint_body_label = self._label("", "hintLabel", True)
+        self.hint_body_label.setMaximumHeight(24)
+        action_layout.addWidget(self.hint_body_label)
+        action_layout.addStretch(1)
+        self.hint_body_label.hide()
+        body_layout.addWidget(action_card, stretch=0)
 
-        hint_frame = ttk.LabelFrame(side_panel, text=self.t("hint.group"), padding=14)
-        hint_frame.grid(row=1, column=0, sticky="ew", pady=(12, 0))
-        hint_frame.columnconfigure(0, weight=1)
-        ttk.Label(
-            hint_frame,
-            textvariable=self.hint_var,
-            style="Body.TLabel",
-            wraplength=280,
-            justify=tk.LEFT,
-        ).grid(row=0, column=0, sticky="nw")
+        layout.addLayout(body_layout, stretch=1)
 
     def _build_settings_tab(self):
-        self.settings_tab.columnconfigure(0, weight=1)
-        self.settings_tab.rowconfigure(3, weight=1)
+        layout = QVBoxLayout(self.settings_tab)
+        layout.setContentsMargins(28, 22, 28, 20)
+        layout.setSpacing(12)
 
-        header = ttk.Frame(self.settings_tab, style="Card.TFrame")
-        header.grid(row=0, column=0, sticky="ew", pady=(0, 14))
-        header.columnconfigure(0, weight=1)
-        ttk.Label(header, text=self.t("settings.title"), style="Title.TLabel").grid(
-            row=0, column=0, sticky="w"
+        self.settings_title_label = self._label(self._ui_text("settings.title"), "pageTitleLabel")
+        self.settings_subtitle_label = self._label(
+            self._ui_text("settings.subtitle"),
+            "pageSubtitleLabel",
+            True,
         )
-        ttk.Label(header, text=self.t("settings.subtitle"), style="Subtitle.TLabel").grid(
-            row=1, column=0, sticky="w", pady=(6, 0)
-        )
+        layout.addWidget(self.settings_title_label)
+        layout.addWidget(self.settings_subtitle_label)
 
-        startup_frame = ttk.LabelFrame(
-            self.settings_tab, text=self.t("settings.startup_group"), padding=18
-        )
-        startup_frame.grid(row=1, column=0, sticky="ew", pady=(0, 14))
-        startup_frame.columnconfigure(0, weight=1)
+        cards_layout = QHBoxLayout()
+        cards_layout.setContentsMargins(0, 0, 0, 0)
+        cards_layout.setSpacing(10)
 
-        self.autostart_checkbox = ttk.Checkbutton(
-            startup_frame,
-            text=self.t("settings.autostart"),
-            variable=self.autostart_var,
-            command=self._refresh_startup_controls,
-        )
-        self.autostart_checkbox.grid(row=0, column=0, sticky="w")
-        self.minimize_checkbox = ttk.Checkbutton(
-            startup_frame,
-            text=self.t("settings.minimize_to_tray"),
-            variable=self.minimize_to_tray_var,
-        )
-        self.minimize_checkbox.grid(row=1, column=0, sticky="w", pady=(8, 0))
-        ttk.Label(startup_frame, textvariable=self.language_var, style="Body.TLabel").grid(
-            row=2, column=0, sticky="w", pady=(16, 0)
-        )
-        ttk.Label(
-            startup_frame,
-            text=self.t("settings.startup_hint"),
-            wraplength=640,
-            justify=tk.LEFT,
-            style="Hint.TLabel",
-        ).grid(row=3, column=0, sticky="w", pady=(10, 0))
+        startup_card, startup_layout = self._create_card(margin=(12, 10, 12, 10), spacing=7)
+        startup_layout.addWidget(self._label(self._ui_text("settings.startup_group"), "sectionLabel"))
+        self.autostart_checkbox = CheckBox(self._ui_text("settings.autostart"))
+        self.minimize_checkbox = CheckBox(self._ui_text("settings.minimize_to_tray"))
+        self.autostart_checkbox.stateChanged.connect(self._refresh_startup_controls)
+        self.language_label = self._label("", "bodyLabel")
+        startup_layout.addWidget(self.autostart_checkbox)
+        startup_layout.addWidget(self.minimize_checkbox)
+        startup_layout.addWidget(self.language_label)
+        self.startup_hint_label = self._label(self._ui_text("settings.startup_hint"), "hintLabel", True)
+        startup_layout.addWidget(self.startup_hint_label)
+        startup_layout.addStretch(1)
+        self.startup_hint_label.hide()
+        cards_layout.addWidget(startup_card, stretch=1)
 
-        appearance_frame = ttk.LabelFrame(
-            self.settings_tab, text=self.t("settings.appearance_group"), padding=18
-        )
-        appearance_frame.grid(row=2, column=0, sticky="ew", pady=(0, 14))
-        appearance_frame.columnconfigure(0, weight=1)
-        ttk.Label(
-            appearance_frame,
-            text=self.t("settings.theme"),
-            style="Body.TLabel",
-        ).grid(row=0, column=0, sticky="w")
+        appearance_card, appearance_layout = self._create_card(margin=(12, 10, 12, 10), spacing=7)
+        appearance_layout.addWidget(self._label(self._ui_text("settings.appearance_group"), "sectionLabel"))
+        appearance_layout.addWidget(self._label(self._ui_text("settings.theme"), "bodyLabel"))
+        self.theme_system_radio = RadioButton(self._ui_text("settings.theme.system"))
+        self.theme_light_radio = RadioButton(self._ui_text("settings.theme.light"))
+        self.theme_dark_radio = RadioButton(self._ui_text("settings.theme.dark"))
+        self.theme_system_radio.toggled.connect(self._on_theme_mode_changed)
+        self.theme_light_radio.toggled.connect(self._on_theme_mode_changed)
+        self.theme_dark_radio.toggled.connect(self._on_theme_mode_changed)
+        appearance_layout.addWidget(self.theme_system_radio)
+        appearance_layout.addWidget(self.theme_light_radio)
+        appearance_layout.addWidget(self.theme_dark_radio)
+        self.appearance_hint_label = self._label(self._ui_text("settings.appearance_hint"), "hintLabel", True)
+        appearance_layout.addWidget(self.appearance_hint_label)
+        appearance_layout.addStretch(1)
+        self.appearance_hint_label.hide()
+        cards_layout.addWidget(appearance_card, stretch=1)
 
-        self.theme_system_radio = ttk.Radiobutton(
-            appearance_frame,
-            text=self.t("settings.theme.system"),
-            value=THEME_SYSTEM,
-            variable=self.theme_mode_var,
-            command=self._on_theme_mode_changed,
-        )
-        self.theme_system_radio.grid(row=1, column=0, sticky="w", pady=(8, 0))
+        layout.addLayout(cards_layout, stretch=1)
 
-        self.theme_light_radio = ttk.Radiobutton(
-            appearance_frame,
-            text=self.t("settings.theme.light"),
-            value=THEME_LIGHT,
-            variable=self.theme_mode_var,
-            command=self._on_theme_mode_changed,
-        )
-        self.theme_light_radio.grid(row=2, column=0, sticky="w", pady=(6, 0))
+        self.save_button = PrimaryPushButton(self._ui_text("settings.save"))
+        self.save_button.setObjectName("actionButton")
+        self.save_button.clicked.connect(self._save_settings)
+        footer_layout = QHBoxLayout()
+        footer_layout.setContentsMargins(0, 0, 0, 0)
+        footer_layout.addStretch(1)
+        footer_layout.addWidget(self.save_button, alignment=Qt.AlignRight)
+        layout.addLayout(footer_layout)
 
-        self.theme_dark_radio = ttk.Radiobutton(
-            appearance_frame,
-            text=self.t("settings.theme.dark"),
-            value=THEME_DARK,
-            variable=self.theme_mode_var,
-            command=self._on_theme_mode_changed,
-        )
-        self.theme_dark_radio.grid(row=3, column=0, sticky="w", pady=(6, 0))
+    def _switch_page(self, index):
+        if not hasattr(self, "switchTo"):
+            return
+        self.switchTo(self.control_tab if index == 0 else self.settings_tab)
 
-        ttk.Label(
-            appearance_frame,
-            text=self.t("settings.appearance_hint"),
-            wraplength=640,
-            justify=tk.LEFT,
-            style="Hint.TLabel",
-        ).grid(row=4, column=0, sticky="w", pady=(10, 0))
+    def _update_nav_button_styles(self):
+        return
 
-        current_frame = ttk.LabelFrame(
-            self.settings_tab, text=self.t("settings.current_group"), padding=18
-        )
-        current_frame.grid(row=3, column=0, sticky="nsew")
-        current_frame.columnconfigure(0, weight=1)
-        current_frame.rowconfigure(0, weight=1)
-        ttk.Label(
-            current_frame,
-            textvariable=self.summary_var,
-            wraplength=640,
-            justify=tk.LEFT,
-            style="Body.TLabel",
-        ).grid(row=0, column=0, sticky="nw")
-        self.save_button = ttk.Button(
-            current_frame,
-            text=self.t("settings.save"),
-            style="Primary.TButton",
-            command=self._save_settings,
-        )
-        self.save_button.grid(row=1, column=0, sticky="w", pady=(18, 0))
+    def _packaged_keyboard_icon_path(self):
+        return resource_path("img", "ms_keyboard_tray.ico")
 
-        self._refresh_startup_controls()
+    def _apply_keyboard_window_icon(self):
+        icon = QIcon(self._packaged_keyboard_icon_path())
+        if icon and not icon.isNull():
+            self.setWindowIcon(icon)
+
+    def _configure_window(self):
+        self.setWindowTitle(self._ui_text("app.title"))
+        self.resize(1180, 800)
+        self.setMinimumSize(1080, 720)
+
+        if hasattr(self, "navigationInterface"):
+            self.navigationInterface.setExpandWidth(220)
+            self.navigationInterface.setMinimumExpandWidth(188)
+            self.navigationInterface.setAcrylicEnabled(True)
+            self.navigationInterface.setCollapsible(False)
+            self.navigationInterface.setMenuButtonVisible(False)
+            self.navigationInterface.setReturnButtonVisible(False)
+            self.navigationInterface.setContentsMargins(0, 0, 0, 12)
+            self.navigationInterface.setStyleSheet("QWidget#scrollWidget { margin-top: 0px; }")
+
+        if hasattr(self, "setMicaEffectEnabled"):
+            try:
+                self.setMicaEffectEnabled(True)
+            except Exception:
+                pass
+
+        self._sync_navigation_top_spacer()
+        QTimer.singleShot(0, self._sync_navigation_top_spacer)
+        self._apply_keyboard_window_icon()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._sync_navigation_top_spacer()
+
+    def closeEvent(self, event: QCloseEvent):
+        if self._closing:
+            event.accept()
+            return
+        if self._tray_icon is None:
+            self.exit_application()
+            event.accept()
+            return
+        event.ignore()
+        self.hide_to_tray()
 
     def _resolve_initial_control_mode(self):
         preferred_mode = str(
@@ -778,6 +448,186 @@ class KeyboardControlApp(tk.Tk):
             return CONTROL_MODE_INSTANT
         return CONTROL_MODE_DRIVER
 
+    def _resolve_initial_theme_mode(self):
+        return normalize_theme_mode(self.settings.get("theme_mode"))
+
+    def _set_control_mode(self, mode):
+        self._mode_change_guard = True
+        self.instant_mode_radio.setChecked(mode == CONTROL_MODE_INSTANT)
+        self.driver_mode_radio.setChecked(mode != CONTROL_MODE_INSTANT)
+        self._mode_change_guard = False
+
+    def _set_theme_mode(self, theme_mode):
+        self._theme_mode = normalize_theme_mode(theme_mode)
+        self._theme_change_guard = True
+        self.theme_system_radio.setChecked(self._theme_mode == THEME_SYSTEM)
+        self.theme_light_radio.setChecked(self._theme_mode == THEME_LIGHT)
+        self.theme_dark_radio.setChecked(self._theme_mode == THEME_DARK)
+        self._theme_change_guard = False
+
+    def _effective_theme_mode(self):
+        return resolve_theme_mode(self._theme_mode)
+
+    def _current_theme_label(self):
+        selected_theme = normalize_theme_mode(self._theme_mode)
+        selected_label = self.t(f"settings.theme.{selected_theme}")
+        if selected_theme == THEME_SYSTEM:
+            effective_label = self.t(f"settings.theme.{self._effective_theme_mode()}")
+            return self.t(
+                "settings.theme.current_system",
+                theme=selected_label,
+                effective=effective_label,
+            )
+        return self.t("settings.theme.current", theme=selected_label)
+
+    def _apply_theme(self):
+        effective_theme = self._effective_theme_mode()
+        self._theme_colors = dict(THEME_COLORS[effective_theme])
+        self._applied_theme_mode = effective_theme
+        setTheme(Theme.DARK if effective_theme == THEME_DARK else Theme.LIGHT, save=False, lazy=False)
+        if hasattr(self, "setMicaEffectEnabled"):
+            try:
+                self.setMicaEffectEnabled(effective_theme != THEME_DARK)
+            except Exception:
+                pass
+        if hasattr(self, "navigationInterface"):
+            self.navigationInterface.setAcrylicEnabled(effective_theme != THEME_DARK)
+        colors = self._theme_colors
+
+        self.setStyleSheet(
+            f"""
+            QWidget {{
+                color: {colors["text_primary"]};
+                font-family: "Segoe UI Variable Text", "Microsoft YaHei UI", "Segoe UI";
+                font-size: 10.5pt;
+            }}
+            QWidget#controlTab, QWidget#settingsTab {{
+                background: {colors["page_bg"]};
+            }}
+            QWidget#summaryBar {{
+                background: {colors["page_bg"]};
+                border: 1px solid {colors["tab_bg"]};
+                border-radius: 10px;
+            }}
+            QFrame#panelCard {{
+                background: {colors["page_bg"]};
+                border: 1px solid {colors["tab_bg"]};
+                border-radius: 10px;
+            }}
+            QLabel#pageTitleLabel {{
+                font-size: 24pt;
+                font-weight: 600;
+                color: {colors["text_primary"]};
+                padding: 0;
+            }}
+            QLabel#pageSubtitleLabel {{
+                font-size: 11pt;
+                color: {colors["text_secondary"]};
+                padding: 0 0 2px 0;
+            }}
+            QLabel#sectionLabel {{
+                font-size: 11pt;
+                font-weight: 600;
+                color: {colors["text_primary"]};
+            }}
+            QLabel#statusValueLabel {{
+                font-size: 18pt;
+                font-weight: 600;
+            }}
+            QLabel#bodyLabel {{
+                color: {colors["text_primary"]};
+            }}
+            QLabel#hintLabel {{
+                color: {colors["text_secondary"]};
+                font-size: 10pt;
+            }}
+            QPushButton#actionButton {{
+                min-height: 34px;
+                border-radius: 7px;
+                font-size: 10.5pt;
+            }}
+            QPushButton#actionButton:disabled {{
+                color: {colors["text_muted"]};
+            }}
+            QCheckBox, QRadioButton {{
+                spacing: 7px;
+                min-height: 24px;
+            }}
+            QLabel#deviceSectionLabel {{
+                color: {colors["accent"]};
+                font-weight: 600;
+                font-size: 10pt;
+                margin-top: 4px;
+            }}
+            QLabel#deviceMetaLabel {{
+                color: {colors["text_secondary"]};
+                font-size: 10pt;
+            }}
+            QFrame#deviceRow {{
+                background: {colors["page_bg"]};
+                border: 1px solid {colors["tab_bg"]};
+                border-radius: 8px;
+            }}
+            QFrame#deviceRow:hover {{
+                background: {colors["tab_bg"]};
+            }}
+            QScrollArea#deviceScroll {{
+                border: none;
+                background: {colors["page_bg"]};
+            }}
+            QWidget#deviceListContent {{
+                background: transparent;
+            }}
+            QScrollBar:vertical {{
+                border: none;
+                background: transparent;
+                width: 10px;
+                margin: 6px 2px 6px 0;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {colors["border"]};
+                min-height: 24px;
+                border-radius: 4px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: {colors["text_muted"]};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                border: none;
+                background: transparent;
+                height: 0px;
+            }}
+            """
+        )
+        self._apply_keyboard_window_icon()
+        self._force_theme_repaint()
+
+    def _force_theme_repaint(self):
+        self.setUpdatesEnabled(False)
+        try:
+            self.style().unpolish(self)
+            self.style().polish(self)
+            for widget in self.findChildren(QWidget):
+                widget.style().unpolish(widget)
+                widget.style().polish(widget)
+                widget.update()
+        finally:
+            self.setUpdatesEnabled(True)
+        self.update()
+        self.repaint()
+
+    def _poll_theme_changes(self):
+        if self._closing:
+            return
+
+        if normalize_theme_mode(self._theme_mode) == THEME_SYSTEM:
+            effective_theme = self._effective_theme_mode()
+            if effective_theme != self._applied_theme_mode:
+                self._apply_theme()
+                self._rebuild_device_list()
+                self._update_control_state()
+                self._update_settings_summary()
+
     def _persist_settings_quietly(self):
         try:
             save_settings(self.settings)
@@ -785,8 +635,7 @@ class KeyboardControlApp(tk.Tk):
             pass
 
     def _current_mode(self):
-        selected_mode = self.control_mode_var.get()
-        if selected_mode == CONTROL_MODE_INSTANT and self.control_context.get("instant_available"):
+        if self.instant_mode_radio.isChecked() and self.control_context.get("instant_available"):
             return CONTROL_MODE_INSTANT
         return CONTROL_MODE_DRIVER
 
@@ -802,10 +651,10 @@ class KeyboardControlApp(tk.Tk):
 
     def _selected_groups(self):
         selected = []
-        if self._device_vars:
+        if self._device_checkboxes:
             for group in self._available_groups():
-                variable = self._device_vars.get(group.get("group_key", ""))
-                if variable and variable.get():
+                checkbox = self._device_checkboxes.get(group.get("group_key", ""))
+                if checkbox is not None and checkbox.isChecked():
                     selected.append(group)
             return selected
         return list(self.control_context.get("instant_selected_target_groups", []))
@@ -860,15 +709,12 @@ class KeyboardControlApp(tk.Tk):
 
             if group_states and all(state is False for state in group_states):
                 return False
-
             if group_states and all(state is True for state in group_states):
                 return True
-
             return self.control_context.get("instant_enabled")
 
         if self.pending_driver_state is not None:
             return self.pending_driver_state
-
         return self.control_context.get("driver_enabled")
 
     def _device_is_marked_disabled(self, device):
@@ -906,14 +752,6 @@ class KeyboardControlApp(tk.Tk):
     def _group_state_text(self, group):
         return self.t(f"control.device.state.{self._group_state_key(group)}")
 
-    def _group_state_style(self, group):
-        state_key = self._group_state_key(group)
-        return {
-            "enabled": "DeviceStateEnabled.TLabel",
-            "disabled": "DeviceStateDisabled.TLabel",
-            "unknown": "DeviceStateUnknown.TLabel",
-        }[state_key]
-
     def _device_fingerprint(self, group):
         member_ids = list(group.get("member_instance_ids", []))
         if not member_ids:
@@ -947,10 +785,6 @@ class KeyboardControlApp(tk.Tk):
             if fingerprint:
                 return f"{kind_text} ({fingerprint})"
             return kind_text
-
-        if display_name.upper() == "PS/2 标准键盘".upper() and fingerprint:
-            return f"{display_name} ({fingerprint})"
-
         return display_name
 
     def _device_restart_text(self, device):
@@ -962,30 +796,13 @@ class KeyboardControlApp(tk.Tk):
         return self.t("control.device.restart.verify")
 
     def _device_meta_text(self, device):
-        parts = [
-            self._device_kind_text(device),
-            self.t("control.device.restart.label", value=self._device_restart_text(device)),
-        ]
-        member_count = int(device.get("member_count", 0) or 0)
-        if member_count > 1:
-            parts.append(self.t("control.device.members", count=member_count))
+        parts = [self._device_kind_text(device)]
+        requirement = device.get("restart_requirement")
+        if requirement in {RESTART_REQUIRED, None}:
+            parts.append(self.t("control.device.restart.label", value=self._device_restart_text(device)))
         if not device.get("present", True):
             parts.append(self.t("control.device.not_present"))
-        return " · ".join(parts)
-
-    def _device_meta_text(self, device):
-        parts = [
-            self._device_kind_text(device),
-            self.t("control.device.restart.label", value=self._device_restart_text(device)),
-        ]
-        member_count = int(device.get("member_count", 0) or 0)
-        if member_count > 1:
-            parts.append(self.t("control.device.members", count=member_count))
-        if device.get("recommended_selected"):
-            parts.append(self.t("control.device.selection.recommended"))
-        if not device.get("present", True):
-            parts.append(self.t("control.device.not_present"))
-        return " | ".join(parts)
+        return "  |  ".join(parts)
 
     def _instant_mode_reboot_likely(self):
         groups = self._available_groups()
@@ -995,38 +812,22 @@ class KeyboardControlApp(tk.Tk):
             group.get("restart_requirement") == RESTART_USUALLY_NOT_REQUIRED for group in groups
         )
 
-    def _on_device_list_configure(self, _event=None):
-        if hasattr(self, "device_canvas"):
-            self.device_canvas.configure(scrollregion=self.device_canvas.bbox("all"))
-
-    def _on_device_canvas_configure(self, event):
-        if self._device_canvas_window is not None:
-            self.device_canvas.itemconfigure(self._device_canvas_window, width=event.width)
-
-    def _bind_device_mousewheel(self, _event=None):
-        self.bind_all("<MouseWheel>", self._on_device_mousewheel)
-
-    def _unbind_device_mousewheel(self, _event=None):
-        self.unbind_all("<MouseWheel>")
-
-    def _on_device_mousewheel(self, event):
-        if not hasattr(self, "device_canvas"):
-            return
-        delta = event.delta
-        if delta == 0:
-            return
-        self.device_canvas.yview_scroll(int(-delta / 120), "units")
+    def _clear_layout(self, layout):
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            child_layout = item.layout()
+            if widget is not None:
+                widget.deleteLater()
+            elif child_layout is not None:
+                self._clear_layout(child_layout)
 
     def _rebuild_device_list(self):
-        if not hasattr(self, "device_list_container"):
+        if not hasattr(self, "device_list_layout"):
             return
 
-        for child in self.device_list_container.winfo_children():
-            child.destroy()
-
-        self._device_vars = {}
-        self._device_checkbuttons = []
-
+        self._clear_layout(self.device_list_layout)
+        self._device_checkboxes = {}
         available_groups = self._available_groups()
         selected_keys = {
             group.get("group_key", "")
@@ -1034,152 +835,65 @@ class KeyboardControlApp(tk.Tk):
         }
 
         if not available_groups:
-            ttk.Label(
-                self.device_list_container,
-                text=self.t("control.device.empty"),
-                style="Hint.TLabel",
-                wraplength=440,
-                justify=tk.LEFT,
-            ).grid(row=0, column=0, sticky="w")
-            return
-
-        for row_index, group in enumerate(available_groups):
-            group_key = group.get("group_key", "")
-            row_frame = ttk.Frame(self.device_list_container)
-            row_frame.grid(row=row_index, column=0, sticky="ew", pady=(0, 6))
-            row_frame.columnconfigure(0, weight=1)
-
-            variable = tk.BooleanVar(value=group_key in selected_keys)
-            self._device_vars[group_key] = variable
-
-            check = ttk.Checkbutton(
-                row_frame,
-                text=group.get("display_name") or group_key,
-                variable=variable,
-                command=self._on_device_selection_changed,
-                style="Device.TCheckbutton",
-            )
-            check.grid(row=0, column=0, sticky="w")
-            self._device_checkbuttons.append(check)
-
-            ttk.Label(
-                row_frame,
-                text=self._device_meta_text(group),
-                style="DeviceMeta.TLabel",
-                wraplength=430,
-                justify=tk.LEFT,
-            ).grid(row=1, column=0, sticky="w", pady=(1, 0))
-
-            member_ids = list(group.get("member_instance_ids", []))
-            if len(member_ids) == 1:
-                instance_text = self.t("control.device.instance", instance_id=member_ids[0])
-            else:
-                instance_text = self.t(
-                    "control.device.instance_group",
-                    count=len(member_ids),
-                    instance_id=member_ids[0],
-                )
-            ttk.Label(
-                row_frame,
-                text=instance_text,
-                style="DeviceId.TLabel",
-                wraplength=430,
-                justify=tk.LEFT,
-            ).grid(row=2, column=0, sticky="w")
-
-        self.update_idletasks()
-        self._on_device_list_configure()
-
-    def _rebuild_device_list(self):
-        if not hasattr(self, "device_list_container"):
-            return
-
-        for child in self.device_list_container.winfo_children():
-            child.destroy()
-
-        self._device_vars = {}
-        self._device_checkbuttons = []
-
-        available_groups = self._available_groups()
-        selected_keys = {
-            group.get("group_key", "")
-            for group in self.control_context.get("instant_selected_target_groups", [])
-        }
-
-        if not available_groups:
-            ttk.Label(
-                self.device_list_container,
-                text=self.t("control.device.empty"),
-                style="Hint.TLabel",
-                wraplength=440,
-                justify=tk.LEFT,
-            ).grid(row=0, column=0, sticky="w")
+            self.device_list_layout.addWidget(self._label(self.t("control.device.empty"), "hintLabel", True))
+            self.device_list_layout.addStretch(1)
             return
 
         grouped_sections = {"builtin": [], "external": [], "virtual": [], "other": []}
         for group in available_groups:
             grouped_sections[self._group_section_key(group)].append(group)
 
-        row_index = 0
         for section_key in ("builtin", "external", "virtual", "other"):
             section_groups = grouped_sections.get(section_key, [])
             if not section_groups:
                 continue
 
-            if row_index > 0:
-                ttk.Separator(self.device_list_container).grid(
-                    row=row_index,
-                    column=0,
-                    sticky="ew",
-                    pady=(2, 8),
-                )
-                row_index += 1
-
-            ttk.Label(
-                self.device_list_container,
-                text=self.t(f"control.device.section.{section_key}"),
-                style="DeviceSection.TLabel",
-            ).grid(row=row_index, column=0, sticky="w", pady=(0, 4))
-            row_index += 1
+            self.device_list_layout.addWidget(
+                self._label(self.t(f"control.device.section.{section_key}"), "deviceSectionLabel")
+            )
 
             for group in section_groups:
                 group_key = group.get("group_key", "")
-                row_frame = ttk.Frame(self.device_list_container)
-                row_frame.grid(row=row_index, column=0, sticky="ew", pady=(0, 4))
-                row_frame.columnconfigure(0, weight=1)
-                row_frame.columnconfigure(1, weight=0)
+                state_key = self._group_state_key(group)
 
-                variable = tk.BooleanVar(value=group_key in selected_keys)
-                self._device_vars[group_key] = variable
+                row = QFrame(self.device_list_content)
+                row.setObjectName("deviceRow")
+                row_layout = QVBoxLayout(row)
+                row_layout.setContentsMargins(10, 8, 10, 8)
+                row_layout.setSpacing(4)
 
-                check = ttk.Checkbutton(
-                    row_frame,
-                    text=self._device_primary_text(group),
-                    variable=variable,
-                    command=self._on_device_selection_changed,
-                    style="Device.TCheckbutton",
-                )
-                check.grid(row=0, column=0, sticky="w")
-                self._device_checkbuttons.append(check)
+                top = QHBoxLayout()
+                top.setContentsMargins(0, 0, 0, 0)
+                top.setSpacing(8)
 
-                ttk.Label(
-                    row_frame,
-                    text=self._group_state_text(group),
-                    style=self._group_state_style(group),
-                ).grid(row=0, column=1, sticky="e", padx=(8, 0))
+                checkbox = CheckBox(self._device_primary_text(group), row)
+                checkbox.setChecked(group_key in selected_keys)
+                checkbox.stateChanged.connect(self._on_device_selection_changed)
+                self._device_checkboxes[group_key] = checkbox
+                top.addWidget(checkbox, stretch=1)
 
-                ttk.Label(
-                    row_frame,
-                    text=self._device_meta_text(group),
-                    style="DeviceMeta.TLabel",
-                    wraplength=390,
-                    justify=tk.LEFT,
-                ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(1, 0))
+                state_label = QLabel(self._group_state_text(group), row)
+                if state_key == "disabled":
+                    state_color = self._theme_colors["status_disabled"]
+                    checkbox.setStyleSheet(f"color: {state_color}; font-weight: 600;")
+                    state_label.setStyleSheet(f"color: {state_color}; font-weight: 600;")
+                elif state_key == "enabled":
+                    state_color = self._theme_colors["status_enabled"]
+                    state_label.setStyleSheet(f"color: {state_color}; font-weight: 600;")
+                else:
+                    state_color = self._theme_colors["status_unknown"]
+                    state_label.setStyleSheet(f"color: {state_color}; font-weight: 600;")
 
-                row_index += 1
+                top.addWidget(state_label, alignment=Qt.AlignRight)
+                row_layout.addLayout(top)
 
-        self.update_idletasks()
-        self._on_device_list_configure()
+                meta = QLabel(self._device_meta_text(group), row)
+                meta.setObjectName("deviceMetaLabel")
+                meta.setWordWrap(True)
+                row_layout.addWidget(meta)
+                self.device_list_layout.addWidget(row)
+
+        self.device_list_layout.addStretch(1)
 
     def _refresh_control_context(self):
         refreshed = get_keyboard_control_context(self.settings.get("instant_target_ids"))
@@ -1189,11 +903,8 @@ class KeyboardControlApp(tk.Tk):
         if self.control_context.get("driver_enabled") == self.pending_driver_state:
             self.pending_driver_state = None
 
-        if self.control_context.get("instant_available"):
-            self.instant_mode_radio.state(["!disabled"])
-        else:
-            self.instant_mode_radio.state(["disabled"])
-            self.control_mode_var.set(CONTROL_MODE_DRIVER)
+        if not self.control_context.get("instant_available"):
+            self._set_control_mode(CONTROL_MODE_DRIVER)
 
         self.settings["preferred_control_mode"] = self._current_mode()
         self._persist_settings_quietly()
@@ -1201,108 +912,56 @@ class KeyboardControlApp(tk.Tk):
         self._update_control_state()
         self._update_settings_summary()
 
-    def _on_control_mode_changed(self):
-        if self.control_mode_var.get() == CONTROL_MODE_INSTANT and not self.control_context.get("instant_available"):
-            self.control_mode_var.set(CONTROL_MODE_DRIVER)
+    def _on_control_mode_changed(self, _checked=None):
+        if _checked is False:
+            return
+        if self._mode_change_guard:
+            return
+        if self.instant_mode_radio.isChecked() and not self.control_context.get("instant_available"):
+            self._set_control_mode(CONTROL_MODE_DRIVER)
+
         self.settings["preferred_control_mode"] = self._current_mode()
         self._persist_settings_quietly()
         self._update_control_state()
         self._update_settings_summary()
 
-    def _on_device_selection_changed(self):
+    def _on_theme_mode_changed(self, _checked=None):
+        if _checked is False:
+            return
+        if self._theme_change_guard:
+            return
+
+        if self.theme_system_radio.isChecked():
+            self._theme_mode = THEME_SYSTEM
+        elif self.theme_dark_radio.isChecked():
+            self._theme_mode = THEME_DARK
+        else:
+            self._theme_mode = THEME_LIGHT
+
+        self.settings["theme_mode"] = self._theme_mode
+        self._apply_theme()
+        self._rebuild_device_list()
+        self._update_control_state()
+        self._update_settings_summary()
+
+    def showEvent(self, event: QShowEvent):
+        super().showEvent(event)
+        if self._post_show_theme_synced:
+            return
+        self._post_show_theme_synced = True
+        QTimer.singleShot(0, self._apply_theme)
+
+    def _on_device_selection_changed(self, _state=None):
         self._apply_selected_targets_from_ui()
         self._persist_settings_quietly()
         self._update_control_state()
         self._update_settings_summary()
 
     def _update_control_state(self):
-        if self.control_context.get("instant_available"):
-            self.instant_mode_radio.state(["!disabled"])
-        else:
-            self.instant_mode_radio.state(["disabled"])
-            self.control_mode_var.set(CONTROL_MODE_DRIVER)
-
-        self._apply_selected_targets_from_ui()
-
-        current_mode = self._current_mode()
-        effective_state = self._active_state()
-        available_targets = self._available_groups()
-        selected_groups = self._selected_groups()
-        selected_count = len(selected_groups)
-        total_count = len(available_targets)
-        ignored_count = len(self.control_context.get("instant_ignored_devices", []))
-
-        if current_mode == CONTROL_MODE_INSTANT:
-            self.subtitle_var.set(self.t("control.subtitle.instant"))
-            self.mode_description_var.set(self.t("control.visual_body.instant"))
-            self.hint_var.set(self.t("hint.body.instant"))
-            if total_count:
-                self.device_caption_var.set(self.t("control.device.caption.instant"))
-            else:
-                self.device_caption_var.set(self.t("control.device.caption.empty"))
-        else:
-            self.subtitle_var.set(self.t("control.subtitle.driver"))
-            self.mode_description_var.set(self.t("control.visual_body.driver"))
-            self.hint_var.set(self.t("hint.body.driver"))
-            if total_count:
-                self.device_caption_var.set(self.t("control.device.caption.driver"))
-            else:
-                self.device_caption_var.set(self.t("control.device.caption.empty"))
-
-        if total_count:
-            self.device_summary_var.set(
-                self.t(
-                    "control.device.summary",
-                    selected=selected_count,
-                    total=total_count,
-                    ignored=ignored_count,
-                )
-            )
-        else:
-            self.device_summary_var.set(self.t("control.mode.instant_unavailable"))
-
-        if current_mode == CONTROL_MODE_INSTANT and total_count and selected_count == 0:
-            status_text = self.t("status.no_selection")
-        elif effective_state is None:
-            status_text = self.t("status.unknown")
-        else:
-            status_text = self.t("status.enabled") if effective_state else self.t("status.disabled")
-
-        if current_mode == CONTROL_MODE_DRIVER and self.pending_driver_state is not None:
-            status_text = f"{status_text}{self.t('status.pending')}"
-
-        self.status_var.set(status_text)
-
-        if effective_state is True:
-            self.disable_button.configure(style="Primary.TButton")
-            self.enable_button.configure(style="Secondary.TButton")
-        elif effective_state is False:
-            self.disable_button.configure(style="Secondary.TButton")
-            self.enable_button.configure(style="Primary.TButton")
-        else:
-            self.disable_button.configure(style="Secondary.TButton")
-            self.enable_button.configure(style="Secondary.TButton")
-
-        can_operate = current_mode != CONTROL_MODE_INSTANT or selected_count > 0
-        if not can_operate:
-            self.disable_button.state(["disabled"])
-            self.enable_button.state(["disabled"])
-        elif effective_state is True:
-            self.enable_button.state(["disabled"])
-            self.disable_button.state(["!disabled"])
-        elif effective_state is False:
-            self.disable_button.state(["disabled"])
-            self.enable_button.state(["!disabled"])
-        else:
-            self.disable_button.state(["!disabled"])
-            self.enable_button.state(["!disabled"])
-
-    def _update_control_state(self):
-        if self.control_context.get("instant_available"):
-            self.instant_mode_radio.state(["!disabled"])
-        else:
-            self.instant_mode_radio.state(["disabled"])
-            self.control_mode_var.set(CONTROL_MODE_DRIVER)
+        instant_available = bool(self.control_context.get("instant_available"))
+        self.instant_mode_radio.setEnabled(instant_available)
+        if not instant_available and self.instant_mode_radio.isChecked():
+            self._set_control_mode(CONTROL_MODE_DRIVER)
 
         self._apply_selected_targets_from_ui()
 
@@ -1317,33 +976,31 @@ class KeyboardControlApp(tk.Tk):
 
         if current_mode == CONTROL_MODE_INSTANT:
             if reboot_likely:
-                self.subtitle_var.set(self.t("control.subtitle.instant_limited"))
-                self.hint_var.set(self.t("hint.body.instant_limited"))
+                self.subtitle_label.setText(self._ui_text("control.subtitle.instant_limited"))
             else:
-                self.subtitle_var.set(self.t("control.subtitle.instant"))
-                self.hint_var.set(self.t("hint.body.instant"))
-            self.mode_description_var.set(
-                self.t("control.mode.instant_summary", count=total_count)
-            )
+                self.subtitle_label.setText(self._ui_text("control.subtitle.instant"))
+
+            self.mode_description_label.setText("")
             if total_count:
                 if reboot_likely:
-                    self.device_caption_var.set(self.t("control.device.caption.instant_limited"))
+                    self.device_caption_label.setText(self._ui_text("control.device.caption.instant_limited"))
                 else:
-                    self.device_caption_var.set(self.t("control.device.caption.instant"))
+                    self.device_caption_label.setText(self._ui_text("control.device.caption.instant"))
             else:
-                self.device_caption_var.set(self.t("control.device.caption.empty"))
+                self.device_caption_label.setText(self._ui_text("control.device.caption.empty"))
+            self.hint_body_label.setText("")
         else:
-            self.subtitle_var.set(self.t("control.subtitle.driver"))
-            self.mode_description_var.set(self.t("control.mode.driver_summary"))
-            self.hint_var.set(self.t("hint.body.driver"))
+            self.subtitle_label.setText(self._ui_text("control.subtitle.driver"))
+            self.mode_description_label.setText("")
             if total_count:
-                self.device_caption_var.set(self.t("control.device.caption.driver"))
+                self.device_caption_label.setText(self._ui_text("control.device.caption.driver"))
             else:
-                self.device_caption_var.set(self.t("control.device.caption.empty"))
+                self.device_caption_label.setText(self._ui_text("control.device.caption.empty"))
+            self.hint_body_label.setText("")
 
         if total_count:
-            self.device_summary_var.set(
-                self.t(
+            self.device_summary_label.setText(
+                self._ui_text(
                     "control.device.summary",
                     selected=selected_count,
                     total=total_count,
@@ -1351,97 +1008,77 @@ class KeyboardControlApp(tk.Tk):
                 )
             )
         else:
-            self.device_summary_var.set(self.t("control.mode.instant_unavailable"))
+            self.device_summary_label.setText(self._ui_text("control.mode.instant_unavailable"))
 
         if current_mode == CONTROL_MODE_INSTANT and total_count and selected_count == 0:
-            status_text = self.t("status.no_selection")
+            status_text = self._ui_text("status.no_selection")
+            status_color = self._theme_colors["text_muted"]
         elif effective_state is None:
-            status_text = self.t("status.unknown")
+            status_text = self._ui_text("status.unknown")
+            status_color = self._theme_colors["status_unknown"]
+        elif effective_state:
+            status_text = self._ui_text("status.enabled")
+            status_color = self._theme_colors["status_enabled"]
         else:
-            status_text = self.t("status.enabled") if effective_state else self.t("status.disabled")
+            status_text = self._ui_text("status.disabled")
+            status_color = self._theme_colors["status_disabled"]
 
         if current_mode == CONTROL_MODE_DRIVER and self.pending_driver_state is not None:
-            status_text = f"{status_text}{self.t('status.pending')}"
+            status_text = f"{status_text}{self._ui_text('status.pending')}"
 
-        self.status_var.set(status_text)
-
-        if effective_state is True:
-            self.disable_button.configure(style="Primary.TButton")
-            self.enable_button.configure(style="Secondary.TButton")
-        elif effective_state is False:
-            self.disable_button.configure(style="Secondary.TButton")
-            self.enable_button.configure(style="Primary.TButton")
-        else:
-            self.disable_button.configure(style="Secondary.TButton")
-            self.enable_button.configure(style="Secondary.TButton")
+        self.status_value_label.setText(status_text)
+        self.status_value_label.setStyleSheet(f"color: {status_color};")
 
         can_operate = current_mode != CONTROL_MODE_INSTANT or selected_count > 0
         if not can_operate:
-            self.disable_button.state(["disabled"])
-            self.enable_button.state(["disabled"])
+            self.disable_button.setEnabled(False)
+            self.enable_button.setEnabled(False)
         elif effective_state is True:
-            self.enable_button.state(["disabled"])
-            self.disable_button.state(["!disabled"])
+            self.disable_button.setEnabled(True)
+            self.enable_button.setEnabled(False)
         elif effective_state is False:
-            self.disable_button.state(["disabled"])
-            self.enable_button.state(["!disabled"])
+            self.disable_button.setEnabled(False)
+            self.enable_button.setEnabled(True)
         else:
-            self.disable_button.state(["!disabled"])
-            self.enable_button.state(["!disabled"])
+            self.disable_button.setEnabled(True)
+            self.enable_button.setEnabled(True)
 
     def _update_settings_summary(self):
-        if not autostart_supported():
-            summary = self.t("settings.status.unsupported")
-        elif not self.settings.get("autostart_enabled"):
-            summary = self.t("settings.status.disabled")
-        elif self.settings.get("start_minimized_to_tray"):
-            summary = self.t("settings.status.enabled_minimized")
-        else:
-            summary = self.t("settings.status.enabled_visible")
+        self.language_label.setText(
+            self._ui_text("settings.language", language=self.i18n.language_name)
+        )
 
-        summary_lines = [
-            summary,
-            self.t("settings.mode.current", mode=self._current_mode_label()),
-            self._current_theme_label(),
-        ]
-        if self._available_groups():
-            summary_lines.append(
-                self.t("settings.targets.current", count=len(self._selected_groups()))
-            )
-
-        self.summary_var.set("\n\n".join(summary_lines))
-        self.language_var.set(self.t("settings.language", language=self.i18n.language_name))
-
-    def _refresh_startup_controls(self):
-        enabled = self.autostart_var.get()
+    def _refresh_startup_controls(self, _state=None):
+        enabled = self.autostart_checkbox.isChecked()
         if autostart_supported():
-            self.autostart_checkbox.state(["!disabled"])
-            if enabled:
-                self.minimize_checkbox.state(["!disabled"])
-            else:
-                self.minimize_checkbox.state(["disabled"])
+            self.autostart_checkbox.setEnabled(True)
+            self.minimize_checkbox.setEnabled(enabled)
         else:
-            self.autostart_checkbox.state(["disabled"])
-            self.minimize_checkbox.state(["disabled"])
+            self.autostart_checkbox.setEnabled(False)
+            self.minimize_checkbox.setEnabled(False)
 
     def _show_error(self, message):
-        messagebox.showerror(self.t("dialog.error_title"), message)
+        QMessageBox.critical(self, self.t("dialog.error_title"), message)
 
     def _show_info(self, message):
-        messagebox.showinfo(self.t("dialog.info_title"), message)
+        QMessageBox.information(self, self.t("dialog.info_title"), message)
 
     def _show_warning(self, message):
-        messagebox.showwarning(self.t("dialog.confirm_title"), message)
+        QMessageBox.warning(self, self.t("dialog.confirm_title"), message)
 
     def _show_unknown_state_warning(self):
-        messagebox.showwarning(self.t("dialog.confirm_title"), self.t("warning.unknown_state"))
+        QMessageBox.warning(
+            self,
+            self.t("dialog.confirm_title"),
+            self.t("warning.unknown_state"),
+        )
 
-    def _refresh_state_from_system(self):
+    def _refresh_state_from_system(self, _checked=None):
         self._refresh_control_context()
 
     def _schedule_state_refreshes(self):
         for delay_ms in (250, 900, 1800, 3200):
-            self.after(delay_ms, self._refresh_state_from_system)
+            QTimer.singleShot(delay_ms, self._refresh_state_from_system)
 
     def _normalize_operation_error(self, details):
         if details == "cancelled":
@@ -1497,13 +1134,20 @@ class KeyboardControlApp(tk.Tk):
         self._refresh_control_context()
         self._schedule_state_refreshes()
 
-    def _request_reboot(self):
+    def _request_reboot(self, _checked=None):
         message = (
             self.t("dialog.reboot_pending")
             if self.pending_driver_state is not None
             else self.t("dialog.reboot_idle")
         )
-        if not messagebox.askyesno(self.t("dialog.confirm_title"), message):
+        result = QMessageBox.question(
+            self,
+            self.t("dialog.confirm_title"),
+            message,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if result != QMessageBox.Yes:
             return
 
         if is_admin():
@@ -1515,12 +1159,12 @@ class KeyboardControlApp(tk.Tk):
             normalized = self._normalize_operation_error(details)
             self._show_error(f"{self.t('error.reboot_failed')}\n\n{normalized}")
 
-    def _save_settings(self):
+    def _save_settings(self, _checked=None):
         new_settings = {
-            "autostart_enabled": bool(self.autostart_var.get()),
-            "start_minimized_to_tray": bool(self.minimize_to_tray_var.get()),
+            "autostart_enabled": bool(self.autostart_checkbox.isChecked()),
+            "start_minimized_to_tray": bool(self.minimize_checkbox.isChecked()),
             "preferred_control_mode": self._current_mode(),
-            "theme_mode": normalize_theme_mode(self.theme_mode_var.get()),
+            "theme_mode": normalize_theme_mode(self._theme_mode),
             "instant_target_ids": list(self._selected_target_ids()),
         }
 
@@ -1545,10 +1189,11 @@ class KeyboardControlApp(tk.Tk):
         self.settings["preferred_control_mode"] = new_settings["preferred_control_mode"]
         self.settings["theme_mode"] = new_settings["theme_mode"]
         self.settings["instant_target_ids"] = list(new_settings["instant_target_ids"])
-        self.autostart_var.set(bool(self.settings.get("autostart_enabled")))
-        self.minimize_to_tray_var.set(bool(self.settings.get("start_minimized_to_tray")))
-        self.theme_mode_var.set(normalize_theme_mode(self.settings.get("theme_mode")))
+        self.autostart_checkbox.setChecked(bool(self.settings.get("autostart_enabled")))
+        self.minimize_checkbox.setChecked(bool(self.settings.get("start_minimized_to_tray")))
+        self._set_theme_mode(self.settings.get("theme_mode"))
         self._apply_theme()
+        self._rebuild_device_list()
         self._update_control_state()
         self._refresh_startup_controls()
         self._update_settings_summary()
@@ -1559,20 +1204,20 @@ class KeyboardControlApp(tk.Tk):
             return text.replace(" ", "", 1)
 
         return {
-            "show": compact_menu_label(self.t("tray.show")),
-            "disable": compact_menu_label(self.t("tray.disable")),
-            "enable": compact_menu_label(self.t("tray.enable")),
-            "reboot": compact_menu_label(self.t("tray.reboot")),
-            "exit": compact_menu_label(self.t("tray.exit")),
+            "show": compact_menu_label(self._ui_text("tray.show")),
+            "disable": compact_menu_label(self._ui_text("tray.disable")),
+            "enable": compact_menu_label(self._ui_text("tray.enable")),
+            "reboot": compact_menu_label(self._ui_text("tray.reboot")),
+            "exit": compact_menu_label(self._ui_text("tray.exit")),
         }
 
     def _start_tray(self):
         try:
             self._tray_icon = TrayIcon(
-                tooltip=self.t("app.title"),
+                tooltip=self._ui_text("app.title"),
                 command_queue=self._tray_queue,
                 labels=self._tray_labels(),
-                icon_path=resource_path("img", "icon.ico"),
+                icon_path=self._packaged_keyboard_icon_path(),
             )
             self._tray_icon.start()
         except Exception:
@@ -1598,8 +1243,6 @@ class KeyboardControlApp(tk.Tk):
         except queue.Empty:
             pass
 
-        self.after(150, self._poll_tray_commands)
-
     def _should_start_hidden(self):
         return self.launched_from_autostart and bool(self.settings.get("start_minimized_to_tray"))
 
@@ -1607,20 +1250,28 @@ class KeyboardControlApp(tk.Tk):
         if self._tray_icon is None:
             self.exit_application()
             return
-        self.withdraw()
+        self.hide()
 
     def show_window(self):
-        self.deiconify()
-        self.state("normal")
-        self.after_idle(self.lift)
-        self.after_idle(self.focus_force)
+        self.show()
+        state = self.windowState()
+        self.setWindowState((state & ~Qt.WindowMinimized) | Qt.WindowActive)
+        self.raise_()
+        self.activateWindow()
 
     def exit_application(self):
         if self._closing:
             return
 
         self._closing = True
+        if hasattr(self, "_tray_timer"):
+            self._tray_timer.stop()
+        if hasattr(self, "_theme_timer"):
+            self._theme_timer.stop()
         if self._tray_icon:
             self._tray_icon.stop()
             self._tray_icon = None
-        self.destroy()
+
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()

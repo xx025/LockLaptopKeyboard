@@ -6,6 +6,12 @@ import tkinter as tk
 from tkinter import messagebox
 from pathlib import Path
 
+if __name__ == "__main__" and __package__ in {None, ""}:
+    # Allow running this file directly:
+    # `python lock_laptop_keyboard/app.py`
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    __package__ = "lock_laptop_keyboard"
+
 from .constants import (
     AUTOSTART_FLAG,
     CONTROL_MODE_DRIVER,
@@ -24,7 +30,6 @@ from .system_control import (
     set_keyboard_enabled,
     set_windows_app_id,
 )
-from .ui import KeyboardControlApp
 
 
 def build_parser():
@@ -102,17 +107,30 @@ def main(argv=None):
     i18n = create_i18n()
 
     try:
+        from PyQt5.QtWidgets import QApplication
+
+        qt_app = QApplication.instance()
+        if qt_app is None:
+            qt_app = QApplication(sys.argv)
+
+        from .ui import KeyboardControlApp
+
         set_windows_app_id()
         settings = sync_settings_with_system(load_settings())
         control_context = get_keyboard_control_context(settings.get("instant_target_ids"))
-        app = KeyboardControlApp(
+
+        window = KeyboardControlApp(
             control_context=control_context,
             i18n=i18n,
             settings=settings,
             launched_from_autostart=bool(args.autostart),
         )
-        app.mainloop()
-        return 0
+        window.show()
+        return int(qt_app.exec())
     except Exception:
         _show_fatal_error(i18n, traceback.format_exc())
         return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
