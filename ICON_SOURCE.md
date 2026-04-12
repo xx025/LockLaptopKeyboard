@@ -11,9 +11,14 @@
 
 ## Packaged Asset
 
-- Converted icon file used by this app:
+- Base icon file used by this app:
   `img/ms_keyboard_tray.ico`
 - Used for:
   - window icon
   - tray icon
   - PyInstaller exe icon (see `LockLaptopKeyboard.spec`)
+- Runtime icon rendering:
+  - The app now generates a higher-contrast blue badge icon at startup for the
+    window icon and tray icon.
+  - The keyboard glyph still comes from `img/ic_fluent_keyboard_24_regular.svg`.
+  - The generated tray `.ico` is cached under `%APPDATA%\\LockLaptopKeyboard`.

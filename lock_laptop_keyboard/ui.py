@@ -2,7 +2,7 @@ import queue
 import re
 
 from PyQt5.QtCore import QTimer, Qt
-from PyQt5.QtGui import QCloseEvent, QIcon, QShowEvent
+from PyQt5.QtGui import QCloseEvent, QShowEvent
 from PyQt5.QtWidgets import (
     QApplication,
     QFrame,
@@ -41,6 +41,7 @@ from .constants import (
     TRAY_COMMAND_REBOOT,
     TRAY_COMMAND_SHOW,
 )
+from .icons import app_icon, ensure_tray_icon_file
 from .settings import (
     autostart_supported,
     normalize_theme_mode,
@@ -49,7 +50,6 @@ from .settings import (
     set_autostart_enabled,
     sync_settings_with_system,
 )
-from .resources import resource_path
 from .system_control import (
     RESTART_REQUIRED,
     RESTART_USUALLY_NOT_REQUIRED,
@@ -391,12 +391,15 @@ class KeyboardControlApp(FluentWindow):
     def _update_nav_button_styles(self):
         return
 
-    def _packaged_keyboard_icon_path(self):
-        return resource_path("img", "ms_keyboard_tray.ico")
+    def _tray_keyboard_icon_path(self):
+        return ensure_tray_icon_file()
 
     def _apply_keyboard_window_icon(self):
-        icon = QIcon(self._packaged_keyboard_icon_path())
+        icon = app_icon()
         if icon and not icon.isNull():
+            app = QApplication.instance()
+            if app is not None:
+                app.setWindowIcon(icon)
             self.setWindowIcon(icon)
 
     def _configure_window(self):
@@ -1217,7 +1220,7 @@ class KeyboardControlApp(FluentWindow):
                 tooltip=self._ui_text("app.title"),
                 command_queue=self._tray_queue,
                 labels=self._tray_labels(),
-                icon_path=self._packaged_keyboard_icon_path(),
+                icon_path=self._tray_keyboard_icon_path(),
             )
             self._tray_icon.start()
         except Exception:
